@@ -2,11 +2,10 @@
 require(bayou)
 require(OUwie)
 require(aRbor)
-setwd("~/repos/growthforms/")
 
-tree <- read.tree("./Vascular_Plants_rooted.dated.tre")
-AEZ3 <- read.csv("./speciesTraitDataAEZ3.csv")
-climate <- read.csv("./WoodyClimateHemi.12May.csv")
+tree <- read.tree("../Vascular_Plants_rooted.dated.tre")
+AEZ3 <- read.csv("../speciesTraitDataAEZ3.csv")
+climate <- read.csv("../WoodyClimateHemi.12May.csv")
 AEZ3$species <- gsub(" ", "_", AEZ3$gs)
 climate$species <- gsub(" ", "_", climate$species)
 dat <- left_join(climate, AEZ3)
@@ -234,3 +233,8 @@ plot(theta, pch=21, cex=2, bg=cols, ylim=ylim, xlim=c(0.5,4.5))
 lapply(1:4, function(x) lines(rep(x,2), c(theta[x]-2*sqrt(Vy[x]), theta[x]+2*sqrt(Vy[x])), col=x, lty=2, lwd=2))
 
 dev.off()
+
+saveRDS(fits, "../output/OUwie/OUwiefits.rds")
+saveRDS(smtrees, "../output/OUwie/OUwietrees.rds")
+saveRDS(parests, "../output/OUwie/parests.rds")
+saveRDS(parests, "../output/OUwie/aictable.rds")

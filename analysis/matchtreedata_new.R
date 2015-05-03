@@ -40,7 +40,7 @@ dat.missing <- setdiff(rownames(dat), rownames(tax))
 phylook <- phyndr_taxonomy(ptree, data_species=pdat, taxonomy=tax)
 
 td <- make.treedata(tree, dat)
-apply(td$dat, 2, function(x) (length(x)-sum(is.na(x))))
+
 tot =0
 x=0
 for(i in 1:100){
@@ -63,8 +63,10 @@ for(i in 1:100){
 
 }
 td <- TD
-#
-#
+# Number of matches
+apply(td$dat, 2, function(x) (length(x)-sum(is.na(x))))
+# Number of climbers
+sum(td$dat$support =="C",na.rm=TRUE)
 
 head(td$dat)
 setdiff(td$phy$tip.label[!is.na(td$dat$pdryq.me)], td$phy$tip.label[!is.na(td$dat$precip)])
