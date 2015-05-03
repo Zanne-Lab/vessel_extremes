@@ -1,0 +1,25 @@
+#First pass at conduit analysis
+#Will Pearse - 2014-05-15
+
+###############################
+#HEADERS#######################
+###############################
+require(caper)
+require(phytools)
+require(OUwie)
+#Below can be found online at github.com/willpearse/willeerd/R/clean.taxonomy.R
+source("~/Code/willeerd/R/clean.taxonomy.R")
+
+###############################
+#DATA##########################
+###############################
+#Load
+tree <- read.tree("~/Dropbox/ConduitAnatomyGFClimate/Vascular_Plants_rooted.dated.tre")
+climate <- read.csv("~/Dropbox/ConduitAnatomyGFClimate/WoodyClimateHemi.12May.csv")
+traits <- read.csv("~/Dropbox/ConduitAnatomyGFClimate/CombinedGFConduit.csv")
+#Match traits and bind in missing
+traits$gs <- gsub(" ", "_", traits$gs)
+missing <- setdiff(traits$gs, tree$tip.label)
+
+
+make.composite.with.polytomies <- function(tree, genera, species, max.genus.age=NA)
