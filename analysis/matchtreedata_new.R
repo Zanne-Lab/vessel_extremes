@@ -20,8 +20,10 @@ climate2 <- read.table("../datasets/spp_summaries.txt")
 vesselanatomy <- read.csv("../datasets/T&MGFConduit.csv")
 additional <- read.csv("../datasets/growthFormDataTropicosAdditions.csv")
 vesselanatomy <- vesselanatomy[!duplicated(vesselanatomy$gs.tpl1.1),]
-colnames(vesselanatomy)[1] <- "species"
-colnames(growthforms)[1] <- colnames(climate[1]) <- colnames(vesselanatomy)[1] <- "species"
+colnames(additional)[1] <- colnames(growthforms)[1] <- colnames(climate[1]) <- colnames(vesselanatomy)[1] <- "species"
+growthforms <- rbind(growthforms, additional)
+growthforms <- group_by(growthforms, species)
+ugrowthforms <- summarize(growthforms, support=unique(support))
 vac <- left_join(vesselanatomy, climate2)
 vacf <- left_join(vac, growthforms)
 vacf <- vacf[!duplicated(vacf$species),]
@@ -34,22 +36,38 @@ rownames(dat) <- dat$species
 tax <- lookup_table(unique(c(tree$tip.label, rownames(dat))), by_species = TRUE)
 tree.missing <- setdiff(tree$tip.label, rownames(tax))
 dat.missing <- setdiff(rownames(dat), rownames(tax))
-ptree <- drop.tip(tree, tree.missing)
-pdat <- rownames(dat)[-match(dat.missing, dat$species)]
-
 
 phylook <- phyndr_taxonomy(ptree, data_species=pdat, taxonomy=tax)
 
-
 td <- make.treedata(tree, dat)
 apply(td$dat, 2, function(x) (length(x)-sum(is.na(x))))
+tot =0
+x=0
+for(i in 1:100){
+   phy <- phyndr::phyndr_sample(phylook)
+   td <- make.treedata(phy, dat)
+   suppN <- sum(td$dat$support=="C", na.rm=TRUE)
+   suppNtot <- apply(td$dat, 2, function(x) (length(x)-sum(is.na(x))))['support']
+   if(suppN == x){
+     if(suppNtot>tot){
+       TD <- td
+       tot = suppNtot
+       print(suppNtot)
+     }
+   }
+   if(suppN > x){
+     TD <- td
+     x = suppN
+     print(suppN)
+   }
 
-
-
+}
+td <- TD
+#
+#
 
 head(td$dat)
 setdiff(td$phy$tip.label[!is.na(td$dat$pdryq.me)], td$phy$tip.label[!is.na(td$dat$precip)])
-
 
 saveRDS(td, file="../output/cleandata/matchednewdata.rds")
 
