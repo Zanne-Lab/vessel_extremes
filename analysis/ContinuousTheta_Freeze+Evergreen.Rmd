@@ -1,0 +1,1296 @@
+---
+title: "Vessel size and continuous predictors"
+output: html_notebook
+---
+
+An experimental method to deal with continuous predictors and possible alternative functional relationships between them and the trait of interest. In this case, we are modeling vessel size in response to environmental temperature. 
+
+```{r}
+## Load in libraries
+library(bayou)
+library(treeplyr)
+library(diversitree)
+library(optimx)
+
+## Set working directory
+setwd("~/repos/growthforms/analysis")
+
+```
+
+
+```{r}
+td <- readRDS("../output/cleandata/tdOUwie.rds")
+td
+```
+
+
+Bayesian update functions:
+
+```{r}
+## Test 3 different functions. 
+## 1. Step function with 3 parameters:
+.updateStepFxTheta <- function(pars, cache, d, ct, move, prior=NULL){
+  pars.new <- bayou:::.slidingWindowProposal(cache, pars, d, move, ct)$pars
+  hr <- 0
+  pars.new$theta <- ifelse(midbins>pars.new$beta_center, pars.new$beta_right, pars.new$beta_left)
+  return(list(pars=pars.new, hr=hr))
+}
+
+## 2. Sigmoid function with 5 parameters
+.updateSigmoidFxTheta <- function(pars, cache, d, ct, move, prior=NULL){
+  pars.new <- bayou:::.slidingWindowProposal(cache, pars, d, move, ct)$pars
+  hr <- 0
+  pars.new$theta <- pars.new$beta_left + pars.new$beta_right/(1 + exp(pars.new$beta_slope * (midbins - pars.new$beta_center)))
+  return(list(pars=pars.new, hr=hr))
+}
+
+## 3. Linear function with 2 parameters
+.updateLinearFxTheta <- function(pars, cache, d, ct, move, prior=NULL){
+  pars.new <- bayou:::.slidingWindowProposal(cache, pars, d, move, ct)$pars
+  hr <- 0
+  pars.new$theta <- pars.new$beta_intercept + pars.new$beta_slope * midbins
+  return(list(pars=pars.new, hr=hr))
+}
+```
+
+Bayesian update functions for dealing with simmap reconstructions
+```{r}
+## Other needed functions
+.newMap <- function(pars, cache, d, ct, prior=NULL, move=NULL){
+  pars.new <- pars
+  stree <- reorderSimmap(make.simmap(cache$phy, setNames(cache$pred[[1]], cache$phy$tip.label), Q=Q, message=FALSE), "postorder")
+  shifts <- sapply(stree$maps, function(x) names(x)[-1])
+  pars.new$sb <- unlist(sapply(1:length(shifts), function(x) rep(x, length(shifts[[x]]))))
+  pars.new$t2 <- as.numeric(unlist(sapply(stree$maps, function(x) names(x)[-1])))
+  pars.new$loc <- unlist(sapply(stree$maps, function(x) cumsum(x)[-1]))
+  pars.new$k <- length(pars.new$sb)
+  hr <- 0
+  return(list(pars=pars.new, hr=Inf))
+}
+
+.newMapPresample <- function(pars, cache, d, ct, prior=NULL, move=NULL){
+  pars.new <- pars
+  index <- sample(1:length(strees.bayou), 1, replace=FALSE)
+  pars.new$sb <- strees.bayou[[index]]$sb #unlist(sapply(1:length(shifts), function(x) rep(x, length(shifts[[x]]))))
+  pars.new$t2 <- strees.bayou[[index]]$t2 #as.numeric(unlist(sapply(stree$maps, function(x) names(x)[-1])))
+  pars.new$loc <- unname(strees.bayou[[index]]$loc) #unlist(sapply(stree$maps, function(x) cumsum(x)[-1]))
+  pars.new$k <- length(pars.new$sb)
+  hr <- 0
+  return(list(pars=pars.new, hr=Inf))
+}
+
+## Empty functions to replace the deterministically specified theta values
+dnull <- function(x, log=TRUE){
+  if(log) 0 else 1
+}
+
+rnull <- function(x){
+  return(x)
+}
+```
+
+
+Place the predictor into bins and transform the tree to unit height.
+```{r}
+## Set up the bins:
+ncat <- 10
+pred <- "tmin.01"
+trait <- "lnVs"
+bins <- seq(min(td[[pred]])-0.1, max(td[[pred]])+0.1, length.out=ncat)
+midbins <- (bins[2:length(bins)] + bins[1:(length(bins)-1)])/2
+td <- mutate(td, binpred = as.numeric(cut(td[[pred]], breaks=bins, include.lowest=TRUE)))
+hist(td[['binpred']])
+
+
+td$phy$edge.length <- td$phy$edge.length/max(branching.times(td$phy))
+tree <- td$phy
+dat <- td$dat
+
+```
+
+
+Fit a meristic model to the binned predictor data and construct a set of stochastic maps. 
+
+```{r}
+## Use diversitree to fit a meristic model:
+mkn.lik <- make.mkn.meristic(td$phy, td[['binpred']], k = ncat)
+mkn.lik <- constrain(mkn.lik, q.up~q.down)
+p <- c(0.1)
+fit.mkn <- find.mle(mkn.lik, p)
+Q <- matrix(0, ncol=ncat-1, nrow=ncat-1)
+for(i in 1:(ncat-2)){
+  Q[i, i+1] <- fit.mkn$par[1]
+  Q[i+1, i] <- fit.mkn$par[1]
+}
+diag(Q) <- apply(Q, 1, sum)*-1
+rownames(Q) <- colnames(Q) <- 1:ncol(Q)
+simmap2bayou <- function(stree){
+  shifts <- sapply(stree$maps, function(x) names(x)[-1])
+  sb <- unlist(sapply(1:length(shifts), function(x) rep(x, length(shifts[[x]]))))
+  t2 <- as.numeric(unlist(sapply(stree$maps, function(x) names(x)[-1])))
+  loc <- unlist(sapply(stree$maps, function(x) cumsum(x)[-1]))
+  return(list(shifts=shifts, sb=sb, t2=t2, loc=loc))
+}
+#fdfit <- fitDiscrete(td$phy, td[['binpred']], model="meristic")
+#Qg <- geiger:::.Qmatrix.from.gfit(fdfit)
+td <- reorder(td, "postorder")
+stree <- reorderSimmap(make.simmap(td$phy, td[['binpred']], Q=Q), "postorder")
+strees <- make.simmap(td$phy, td[['binpred']], Q=Q, nsim=100)
+for(i in 1:length(strees)) strees[[i]] <- reorderSimmap(strees[[i]], "postorder")
+strees.bayou <- lapply(strees, simmap2bayou)
+plotSimmap(stree, col=setNames(cm.colors(ncat), 1:ncat))
+
+
+model.stepTheta$lik.fn(pp, cache, cache$dat)$loglik
+
+shifts <- sapply(stree$maps, function(x) names(x)[-1])
+sb <- unlist(sapply(1:length(shifts), function(x) rep(x, length(shifts[[x]]))))
+t2 <- as.numeric(unlist(sapply(stree$maps, function(x) names(x)[-1])))
+loc <- unname(unlist(sapply(stree$maps, function(x) cumsum(x)[-1])))
+tmp <- lm(td[[trait]]~td[[pred]]+I(td[[pred]]^2)+I(td[[pred]]^3))
+
+saveRDS(strees.bayou, "../output/OUwie/strees.bayou.rds")
+
+```
+
+```{r}
+strees.bayou <- readRDS("../output/OUwie/strees.bayou.rds")
+```
+
+
+```{r}
+## Starting parameters for each function type:
+## Step function
+step.starts <- c(0, -8, -4)
+startpar.step <- list(alpha=1, sig2=0.5, 
+                 beta_left=step.starts[2], 
+                 beta_right=step.starts[3],
+                 beta_center=step.starts[1],
+                 k=length(sb), ntheta=ncat-1, 
+                 theta=ifelse(midbins > step.starts[1], step.starts[3], step.starts[2]),
+                 sb=sb, loc=loc, t2=t2)
+plot(midbins, startpar.step$theta)
+
+
+sigmoid.starts <- list(beta_left = -2, beta_right = -6, beta_center = 0, beta_slope = 0.02)
+startpar.sigmoid <- list(alpha=1, sig2=0.5, 
+                 beta_left=sigmoid.starts$beta_left, 
+                 beta_right=sigmoid.starts$beta_right,
+                 beta_center=sigmoid.starts$beta_center,
+                 beta_slope = sigmoid.starts$beta_slope,
+                 k=length(sb), ntheta=ncat-1, 
+                 theta= sigmoid.starts$beta_left + sigmoid.starts$beta_right/(1 + exp(sigmoid.starts$beta_slope * (midbins - sigmoid.starts$beta_center))),
+                 sb=sb, loc=loc, t2=t2)
+plot(midbins, startpar.sigmoid$theta)
+
+linear.starts <- list(beta_intercept = -5, beta_slope = 0.01)
+startpar.linear <- list(alpha=1, sig2=0.5, 
+                 beta_intercept=linear.starts$beta_intercept, 
+                 beta_slope=linear.starts$beta_slope,
+                 k=length(sb), ntheta=ncat-1, 
+                 theta= linear.starts$beta_intercept + linear.starts$beta_slope*midbins,
+                 sb=sb, loc=loc, t2=t2)
+plot(midbins, startpar.linear$theta)
+
+```
+
+
+```{r}
+## Set priors
+prior.step <- make.prior(td$phy, plot.prior = FALSE, 
+                          dists=list(dalpha="dlnorm", dsig2="dhalfcauchy", 
+                                     dbeta_left="dunif",
+                                     dbeta_right="dunif",
+                                     dbeta_center="dunif",
+                                     dsb="fixed", dk="fixed", 
+                                     dtheta="dnull", dloc="fixed"), 
+                          param=list(dalpha=list(meanlog=1, sdlog=1), dsig2=list(scale=0.1), 
+                                     dbeta_left=list(min=-12, max=0),
+                                     dbeta_right=list(min=-12, max=0),
+                                     dbeta_center=list(min=-100, max=100),
+                                     dk="fixed",
+                                     dsb="fixed", 
+                                     dtheta=list(), dloc="fixed"),
+                          fixed=list(k=length(sb), ntheta=ncat-1, sb=sb, loc=loc, t2=t2)
+)
+
+prior.sigmoid <- make.prior(td$phy, plot.prior = FALSE, 
+                          dists=list(dalpha="dlnorm", dsig2="dhalfcauchy", 
+                                     dbeta_left="dunif",
+                                     dbeta_right="dunif",
+                                     dbeta_center="dunif",
+                                     dbeta_slope="dlnorm",
+                                     dsb="fixed", dk="fixed", 
+                                     dtheta="dnull", dloc="fixed"), 
+                          param=list(dalpha=list(meanlog=1, sdlog=1), dsig2=list(scale=0.1), 
+                                     dbeta_left=list(min=-12, max=0),
+                                     dbeta_right=list(min=-12, max=0),
+                                     dbeta_center=list(min=-100, max=100),
+                                     dbeta_slope=list(meanlog=-3, sdlog=1),
+                                     dk="fixed",
+                                     dsb="fixed", 
+                                     dtheta=list(), dloc="fixed"),
+                          fixed=list(k=length(sb), ntheta=ncat-1, sb=sb, loc=loc, t2=t2)
+)
+
+prior.linear <- make.prior(td$phy, plot.prior = FALSE, 
+                          dists=list(dalpha="dlnorm", dsig2="dhalfcauchy", 
+                                     dbeta_intercept="dnorm",
+                                     dbeta_slope="dnorm",
+                                     dsb="fixed", dk="fixed", 
+                                     dtheta="dnull", dloc="fixed"), 
+                          param=list(dalpha=list(meanlog=1, sdlog=1), dsig2=list(scale=0.1), 
+                                     dbeta_intercept=list(mean=-6, sd=1.5),
+                                     dbeta_slope=list(mean=0, sd=0.1),
+                                     dk="fixed",
+                                     dsb="fixed", 
+                                     dtheta=list(), dloc="fixed"),
+                          fixed=list(k=length(sb), ntheta=ncat-1, sb=sb, loc=loc, t2=t2)
+)
+```
+
+
+
+```{r}
+model.stepTheta <- list(moves = list(alpha=".multiplierProposal", 
+                                      sig2=".multiplierProposal",
+                                beta_left=".updateStepFxTheta",
+                                beta_right=".updateStepFxTheta",
+                                beta_center=".updateStepFxTheta",
+                                theta=".newMapPresample"),
+                   
+                   control.weights = list(alpha=10, sig2=10,
+                                          beta_left=10,
+                                          beta_right=10,
+                                          beta_center=10,
+                                          theta=1,
+                                          k=0),
+                   D = list(alpha=1, sig2=1, 
+                            beta_left=0.2,
+                            beta_right=0.2,
+                            beta_center=20,
+                            theta = 1),
+                   parorder = c("alpha", "sig2", "beta_left", "beta_right", "beta_center", "theta", "k", "ntheta"),
+                   rjpars = c(),
+                   shiftpars = c("sb", "loc", "t2"),
+                   lik.fn = bayou.lik)
+
+model.stepTheta$monitor.fn <- function(i, lik, pr, pars, accept, accept.type, j){
+  names <- c("gen", "lnL", "prior", "alpha","sig2", "beta_left", "beta_right", "beta_center", "k") #The parameters we want to print
+  string <- "%-8i%-8.2f%-8.2f%-8.2f%-8.2f%-8.2f%-8.2f%-8.2f%-8i" #The types of each parameter
+  acceptratios <- tapply(accept, accept.type, mean)
+  names <- c(names, names(acceptratios))
+  if(j==0){
+    cat(sprintf("%-7.7s", names), "\n", sep=" ")                           
+  }
+  cat(sprintf(string, i, lik, pr, pars$alpha, pars$sig2[1], pars$beta_left, pars$beta_right, pars$beta_center, pars$k), sprintf("%-8.2f", acceptratios),"\n", sep="")
+}
+
+```
+
+
+```{r}
+model.sigmoidTheta <- list(moves = list(alpha=".multiplierProposal", 
+                                      sig2=".multiplierProposal",
+                                  beta_left=".updateSigmoidFxTheta",
+                                beta_right=".updateSigmoidFxTheta",
+                                beta_center=".updateSigmoidFxTheta",
+                                beta_slope=".updateSigmoidFxTheta",
+                                theta=".newMapPresample"),
+                   
+                   control.weights = list(alpha=10, sig2=10,
+                                          beta_left=10,
+                                          beta_right=10,
+                                          beta_center=10,
+                                          beta_slope=10,
+                                          theta=1,
+                                          k=0),
+                   D = list(alpha=1, sig2=1, 
+                            beta_left=0.2,
+                            beta_right=0.2,
+                            beta_center=20,
+                            beta_slope=0.005,
+                            theta = 1),
+                   parorder = c("alpha", "sig2", "beta_left", "beta_right", "beta_center", "beta_slope", "theta", "k", "ntheta"),
+                   rjpars = c(),
+                   shiftpars = c("sb", "loc", "t2"),
+                   lik.fn = bayou.lik)
+
+model.sigmoidTheta$monitor.fn <- function(i, lik, pr, pars, accept, accept.type, j){
+  names <- c("gen", "lnL", "prior", "alpha","sig2", "beta_left", "beta_right", "beta_center", "beta_slope", "k") #The parameters we want to print
+  string <- "%-8i%-8.2f%-8.2f%-8.2f%-8.2f%-8.2f%-8.2f%-8.2f%-8.2f%-8i" #The types of each parameter
+  acceptratios <- tapply(accept, accept.type, mean)
+  names <- c(names, names(acceptratios))
+  if(j==0){
+    cat(sprintf("%-7.7s", names), "\n", sep=" ")                           
+  }
+  cat(sprintf(string, i, lik, pr, pars$alpha, pars$sig2[1], pars$beta_left, pars$beta_right, pars$beta_center, pars$beta_slope, pars$k), sprintf("%-8.2f", acceptratios),"\n", sep="")
+}
+
+```
+
+```{r}
+model.linearTheta <- list(moves = list(alpha=".multiplierProposal", 
+                                      sig2=".multiplierProposal",
+                                  beta_intercept=".updateLinearFxTheta",
+                                beta_slope=".updateLinearFxTheta",
+                                theta=".newMapPresample"),
+                   
+                   control.weights = list(alpha=10, sig2=10,
+                                          beta_intercept=10,
+                                          beta_slope=10,
+                                          theta=1,
+                                          k=0),
+                   D = list(alpha=1, sig2=1, 
+                            beta_intercept=0.5,
+                            beta_slope=0.005,
+                            theta = 1),
+                   parorder = c("alpha", "sig2", "beta_intercept", "beta_slope", "theta", "k", "ntheta"),
+                   rjpars = c(),
+                   shiftpars = c("sb", "loc", "t2"),
+                   lik.fn = bayou.lik)
+
+model.linearTheta$monitor.fn <- function(i, lik, pr, pars, accept, accept.type, j){
+  names <- c("gen", "lnL", "prior", "alpha","sig2", "beta_intercept", "beta_slope", "k") #The parameters we want to print
+  string <- "%-8i%-8.2f%-8.2f%-8.2f%-8.2f%-8.2f%-8.2f%-8i" #The types of each parameter
+  acceptratios <- tapply(accept, accept.type, mean)
+  names <- c(names, names(acceptratios))
+  if(j==0){
+    cat(sprintf("%-7.7s", names), "\n", sep=" ")                           
+  }
+  cat(sprintf(string, i, lik, pr, pars$alpha, pars$sig2[1], pars$beta_intercept, pars$beta_slope, pars$k), sprintf("%-8.2f", acceptratios),"\n", sep="")
+}
+
+```
+
+
+```{r}
+## Just a bunch of tests
+
+cache <- bayou:::.prepare.ou.univariate(td$phy, td[['lnVs']], SE=0, pred=td['binpred'])
+prior.step(startpar.step)
+model.stepTheta$lik.fn(startpar.step, cache, cache$dat)$loglik
+ct <- bayou:::.buildControl(startpar.step, prior.step, move.weights=model.stepTheta$control.weights)
+pars.new <- .newMapPresample(startpar.step, cache, d=model.stepTheta$D$theta, ct = ct)$pars
+prior.step(pars.new)
+model.stepTheta$lik.fn(pars.new, cache, cache$dat)$loglik
+pp <- pars.new
+prior.step(pp)
+model.stepTheta$lik.fn(pp, cache, cache$dat)$loglik
+
+new.pp <- .newMapPresample(pp, cache, 1, ct)$pars
+model.stepTheta$lik.fn(new.pp, cache, cache$dat)$loglik
+
+prior.linear(startpar.linear)
+new.pp <- .newMapPresample(startpar.linear, cache, 1, ct)$pars
+model.linearTheta$lik.fn(new.pp, cache, cache$dat)$loglik
+
+
+
+
+```
+
+
+```{r}
+
+mymcmc.step <- bayou.makeMCMC(td$phy, td[[trait]], pred=td['binpred'], SE=0.02, model=model.stepTheta, prior=prior.step, startpar=startpar.step, new.dir=TRUE, outname="stepTheta_r2", plot.freq=NULL, ticker.freq=2000, samp = 100)
+
+
+mymcmc.sigmoid <- bayou.makeMCMC(td$phy, td[[trait]], pred=td['binpred'], SE=0.02, model=model.sigmoidTheta, prior=prior.sigmoid, startpar=startpar.sigmoid, new.dir=TRUE, outname="sigmoidTheta_r2", plot.freq=NULL, ticker.freq=2000, samp = 100)
+
+
+mymcmc.linear <- bayou.makeMCMC(td$phy, td[[trait]], pred=td['binpred'], SE=0.02, model=model.linearTheta, prior=prior.linear, startpar=startpar.linear, new.dir=TRUE, outname="linearTheta_r2", plot.freq=NULL, ticker.freq=2000, samp = 100)
+
+```
+
+
+```{r}
+mymcmc.step$run(100000)
+chain.step <- mymcmc.step$load()
+chain.step <- set.burnin(chain.step, 0.3)
+plot(chain.step)
+```
+
+
+```{r}
+plot(midbins, startpar.step$theta, ylim=c(-10, 0), type="n")
+x <- -350:200
+points(td[['tmin.025']], td[['lnVs']], pch=21, bg="gray50")
+lapply(seq(1, length(chain.step$gen), 10), function(i) lines(x, ifelse(x>chain.step$beta_center[i], chain.step$beta_right[i], chain.step$beta_left[i]), col=makeTransparent(rgb(1, 0, 0), alpha=10)))
+```
+
+```{r}
+mymcmc.sigmoid$run(100000)
+chain.sigmoid <- mymcmc.sigmoid$load()
+chain.sigmoid <- set.burnin(chain.sigmoid, 0.3)
+plot(chain.sigmoid)
+```
+
+
+```{r}
+plot(midbins, startpar.step$theta, ylim=c(-10, 0), type="n")
+x <- -350:200
+points(td[['tmin.025']], td[['lnVs']], pch=21, bg="gray50")
+lapply(seq(1, length(chain.sigmoid$gen), 1), function(i) lines(x, chain.sigmoid$beta_left[i]+chain.sigmoid$beta_right[i]/(1 + exp(chain.sigmoid$beta_slope[i]*(x-chain.sigmoid$beta_center[i]))), col=makeTransparent(rgb(1, 0, 0), alpha=10)))
+```
+
+
+
+```{r}
+mymcmc.linear$run(100000)
+chain.linear <- mymcmc.linear$load()
+chain.linear <- set.burnin(chain.linear, 0.3)
+plot(chain.linear)
+```
+
+
+```{r}
+plot(midbins, startpar.linear$theta, ylim=c(-10, 0), type="n")
+x <- -350:200
+points(td[['tmin.025']], td[['lnVs']], pch=21, bg="gray50")
+lapply(seq(1, length(chain.linear$gen), 1), function(i) lines(x, chain.linear$beta_intercept[i]+chain.linear$beta_slope[i]*x, col=makeTransparent(rgb(1, 0, 0), alpha=10)))
+```
+
+
+
+
+```{r}
+plot(chain.step$lnL, type="n", ylim=c(-700, -500))
+lines(1:length(chain.sigmoid$lnL), chain.sigmoid$lnL, col="green")
+lines(1:length(chain.linear$lnL), chain.linear$lnL, col="blue")
+lines(1:length(chain.step$lnL), chain.step$lnL, col="red")
+saveRDS(chain.sigmoid, "../output/OUwie/chain.sigmoid.rds")
+saveRDS(chain.linear, "../output/OUwie/chain.linear.rds")
+saveRDS(chain.step, "../output/OUwie/chain.step.rds")
+chain.sigmoid <- readRDS("../output/OUwie/chain.sigmoid.rds")
+chain.linear <- readRDS("../output/OUwie/chain.linear.rds")
+chain.step <- readRDS("../output/OUwie/chain.step.rds")
+
+```
+
+Let's do a likelihood based analysis. 
+
+```{r}
+library(optimx)
+i <- 10
+sb <- strees.bayou[[i]]$sb
+t2 <- strees.bayou[[i]]$t2
+loc <- strees.bayou[[i]]$loc
+k <- length(sb)
+ntheta <- ncat - 1
+lik.sigmoid <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = pp[5],
+               beta_slope = pp[6],
+               k = k, 
+               ntheta=ntheta,
+               theta = pp[3] + pp[4]/(1 + exp(pp[6] * (midbins - pp[5]))),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.sigmoidTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+## Parameter order: alpha, sig2, beta_left, beta_right, beta_center, beta_slope
+pars.sigmoid <- pull.pars(length(chain.sigmoid$gen), chain.sigmoid, model.sigmoidTheta)
+pp.sigmoid <- unname(c(pars.sigmoid$alpha, pars.sigmoid$sig2, pars.sigmoid$beta_left, pars.sigmoid$beta_right, pars.sigmoid$beta_center, pars.sigmoid$beta_slope))
+
+lik.step <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = pp[5],
+               k = k, 
+               ntheta=ntheta,
+               theta = ifelse(midbins>pp[5], pp[4], pp[3]),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.stepTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+## Parameter order: alpha, sig2, beta_left, beta_right, beta_center, beta_slope
+pars.step <- pull.pars(length(chain.step$gen), chain.step, model.stepTheta)
+pp.step <- unname(c(pars.step$alpha, pars.step$sig2, pars.step$beta_left, pars.step$beta_right, pars.step$beta_center))
+
+lik.linear <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_intercept = pp[3],
+               beta_slope = pp[4], 
+               k = k, 
+               ntheta=ntheta,
+               theta = pp[3] + pp[4]*midbins,
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.linearTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+## Parameter order: alpha, sig2, beta_left, beta_right, beta_center, beta_slope
+pars.linear <- pull.pars(length(chain.linear$gen), chain.linear, model.linearTheta)
+pp.linear <- unname(c(pars.linear$alpha, pars.linear$sig2, pars.linear$beta_intercept, pars.linear$beta_slope))
+
+```
+
+
+```{r}
+opt.sigmoid <- optimx(pp.sigmoid, lik.sigmoid, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-12,-200, -0.1), upper=c(1000, 1000, 0, 0, 200, 10))
+opt.step <- optimx(pp.step, lik.step, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-12,-200), 
+                      upper=c(1000, 1000, 0, 0, 200))
+opt.linear <- optimx(pp.linear, lik.linear, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-1), 
+                      upper=c(1000, 1000, 0, 1))
+
+```
+
+```{r}
+aics <- list()
+aics[['aic.sigmoid']] <- 2*6 - 2*opt.sigmoid$value
+aics[['aic.step']] <- 2*5 - 2*opt.step$value
+aics[['aic.linear']] <- 2*4 - 2*opt.linear$value
+aics
+```
+
+```{r}
+plot(midbins, startpar.linear$theta, ylim=c(-10, 0), type="n")
+x <- -350:200
+points(td[['tmin.025']], td[['lnVs']], pch=21, bg="gray50")
+Vy.linear <- sqrt(opt.linear$p2/(2*opt.linear$p1))
+lines(x, opt.linear$p3+opt.linear$p4*x, col=makeTransparent(rgb(0, 0, 1), alpha=255), lwd=2)
+lines(x, (opt.linear$p3+opt.linear$p4*x) + 2*Vy.linear, col=makeTransparent(rgb(0, 0, 1), alpha=255), lwd=2, lty=2)
+lines(x, (opt.linear$p3+opt.linear$p4*x) - 2*Vy.linear, col=makeTransparent(rgb(0, 0, 1), alpha=255), lwd=2, lty=2)
+
+Vy.sigmoid <- opt.sigmoid$p2/(2*opt.sigmoid$p1)
+lines(x, opt.sigmoid$p3+opt.sigmoid$p4/(1 + exp(opt.sigmoid$p6*(x-opt.sigmoid$p5))), col=makeTransparent(rgb(0, 1, 0), alpha=255), lwd=2)
+lines(x, (opt.sigmoid$p3+opt.sigmoid$p4/(1 + exp(opt.sigmoid$p6*(x-opt.sigmoid$p5)))) + 2*Vy.sigmoid, col=makeTransparent(rgb(0, 1, 0), alpha=255), lwd=2, lty=2)
+lines(x, (opt.sigmoid$p3+opt.sigmoid$p4/(1 + exp(opt.sigmoid$p6*(x-opt.sigmoid$p5)))) - 2*Vy.sigmoid, col=makeTransparent(rgb(0, 1, 0), alpha=255), lwd=2, lty=2)
+
+Vy.step <- opt.step$p2/(2*opt.step$p1)
+lines(x, ifelse(x > opt.step$p5, opt.step$p4, opt.step$p3), col=makeTransparent(rgb(1, 0, 0), alpha=255), lwd=2)
+lines(x, ifelse(x > opt.step$p5, opt.step$p4, opt.step$p3) + 2*Vy.step, col=makeTransparent(rgb(1, 0, 0), alpha=255), lwd=2, lty=2)
+lines(x, ifelse(x > opt.step$p5, opt.step$p4, opt.step$p3) - 2*Vy.step, col=makeTransparent(rgb(1, 0, 0), alpha=255), lwd=2, lty=2)
+
+```
+
+
+```{r}
+## Script it over all trees. 
+optimizeModelsOverSimmap <- function(i){
+  sb <- strees.bayou[[i]]$sb
+  t2 <- strees.bayou[[i]]$t2
+  loc <- strees.bayou[[i]]$loc
+  k <- length(sb)
+  ntheta <- ncat - 1
+lik.sigmoid <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = pp[5],
+               beta_slope = pp[6],
+               k = k, 
+               ntheta=ntheta,
+               theta = pp[3] + pp[4]/(1 + exp(pp[6] * (midbins - pp[5]))),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.sigmoidTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+
+lik.sigmoid0 <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = 0,
+               beta_slope = pp[5],
+               k = k, 
+               ntheta=ntheta,
+               theta = pp[3] + pp[4]/(1 + exp(pp[5] * (midbins - 0))),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.sigmoidTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+
+lik.tanhLin <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = pp[5],
+               beta_slope = pp[6],
+               k = k, 
+               ntheta=ntheta,
+               theta = pp[3] + pp[6]*midbins + pp[4]*tanh(midbins - pp[5]),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.sigmoidTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+
+## Parameter order: alpha, sig2, beta_left, beta_right, beta_center, beta_slope
+pars.sigmoid <- pull.pars(length(chain.sigmoid$gen), chain.sigmoid, model.sigmoidTheta)
+pp.sigmoid <- unname(c(pars.sigmoid$alpha, pars.sigmoid$sig2, pars.sigmoid$beta_left, pars.sigmoid$beta_right, pars.sigmoid$beta_center, pars.sigmoid$beta_slope))
+
+pp.sigmoid0 <- pp.sigmoid[-5]
+
+lik.step <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = pp[5],
+               k = k, 
+               ntheta=ntheta,
+               theta = ifelse(midbins>pp[5], pp[4], pp[3]),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.stepTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+
+lik.step0 <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = 0,
+               k = k, 
+               ntheta=ntheta,
+               theta = ifelse(midbins>0, pp[4], pp[3]),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.stepTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+## Parameter order: alpha, sig2, beta_left, beta_right, beta_center, beta_slope
+pars.step <- pull.pars(length(chain.step$gen), chain.step, model.stepTheta)
+pp.step <- unname(c(pars.step$alpha, pars.step$sig2, pars.step$beta_left, pars.step$beta_right, pars.step$beta_center))
+pp.step0 <- pp.step[-5]
+
+lik.linear <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_intercept = pp[3],
+               beta_slope = pp[4], 
+               k = k, 
+               ntheta=ntheta,
+               theta = pp[3] + pp[4]*midbins,
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.linearTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+## Parameter order: alpha, sig2, beta_left, beta_right, beta_center, beta_slope
+pars.linear <- pull.pars(length(chain.linear$gen), chain.linear, model.linearTheta)
+pp.linear <- unname(c(pars.linear$alpha, pars.linear$sig2, pars.linear$beta_intercept, pars.linear$beta_slope))
+
+pp.tanhLin <- unname(c(pars.linear$alpha, pars.linear$sig2, pars.linear$beta_intercept, rnorm(1), runif(1, -10, 10), pars.linear$beta_slope))
+
+opt.sigmoid <- optimx(pp.sigmoid, lik.sigmoid, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-12,-200, -0.1), 
+                      upper=c(2000, 2000, 0, 0, 200, 10))
+opt.step <- optimx(pp.step, lik.step, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-12,-200), 
+                      upper=c(2000, 2000, 0, 0, 200))
+opt.sigmoid0 <- optimx(pp.sigmoid0, lik.sigmoid0, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-12,-0.1), 
+                      upper=c(2000, 2000, 0, 0, 10))
+opt.step0 <- optimx(pp.step0, lik.step0, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-12), 
+                      upper=c(2000, 2000, 0, 0))
+opt.linear <- optimx(pp.linear, lik.linear, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-1), 
+                      upper=c(2000, 2000, 0, 1))
+
+opt.tanhLin <- optimx(pp.tanhLin, lik.tanhLin, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12, -5,-200, -1), upper=c(2000, 2000, 0, 5, 200, 1))
+
+aics <- list()
+aics[['aic.sigmoid']] <- 2*6 - 2*opt.sigmoid$value
+aics[['aic.step']] <- 2*5 - 2*opt.step$value
+aics[['aic.linear']] <- 2*4 - 2*opt.linear$value
+aics[['aic.sigmoid0']] <- 2*5 - 2*opt.sigmoid0$value
+aics[['aic.step0']] <- 2*4 - 2*opt.step0$value
+aics[['aic.tanhLin']] <- 2*6 - 2*opt.tanhLin$value
+aics
+
+return(list(opt.sigmoid=opt.sigmoid, opt.linear=opt.linear, opt.step=opt.step, opt.sigmoid0=opt.sigmoid0, opt.step0=opt.step0, opt.tanhLin=opt.tanhLin, aics=aics))
+}
+
+
+```
+
+
+```{r}
+
+opt.allmodels <- lapply(1:100, optimizeModelsOverSimmap)
+
+```
+
+```{r}
+all.sigmoid <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.sigmoid))
+all.step <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.step))
+all.sigmoid0 <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.sigmoid0))
+all.step0 <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.step0))
+all.linear <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.linear))
+all.tanhLin <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.tanhLin))
+all.aics <- do.call(rbind, lapply(opt.allmodels, function(x) do.call(cbind, x$aics)))
+boxplot(all.aics)
+all.aics <- as.data.frame(all.aics)
+t.test(all.aics$aic.sigmoid, all.aics$aic.linear, paired = TRUE)
+tmp <- reshape2::melt(all.aics)
+cat("Akaike weights\n")
+aicws <- aicw(tmp$value)$w
+round(tapply(aicws, tmp$variable, sum),2)
+
+dAICs <- apply(all.aics, 1, function(x) x-min(x, na.rm=TRUE))
+par(mar=c(10, 4, 1,1))
+boxplot(t(dAICs), las=2, xlab="Model", ylab="dAIC")
+boxplot(t(dAICs), las=2, xlab="Model", ylab="dAIC", ylim=c(0,8))
+cat("Mean dAIC values\n")
+apply(t(dAICs), 2, mean)
+
+```
+
+# Independent analyses for Deciduous vs. Evergreen
+Let's filter by phenology and analyze each independently. This is not ideal, since transitions occur between deciduous and evergreen species, and are not accounted for when we filter this way. However, if phylogenetic half-lives are small, this is probably of negligible importance. 
+
+```{r}
+## Set up the bins:
+ncat <- 10
+pred <- "tmin.01"
+trait <- "lnVs"
+bins <- seq(min(td[[pred]])-0.1, max(td[[pred]])+0.1, length.out=ncat)
+midbins <- (bins[2:length(bins)] + bins[1:(length(bins)-1)])/2
+td <- mutate(td, binpred = as.numeric(cut(td[[pred]], breaks=bins, include.lowest=TRUE)))
+hist(td[['binpred']])
+bins
+
+td$phy$edge.length <- td$phy$edge.length/max(branching.times(td$phy))
+tree <- td$phy
+dat <- td$dat
+
+```
+
+
+
+```{r}
+tdEV <- filter(td, phenology == "EV")
+tdD <- filter(td, phenology == "D")
+tdEV$phy <- reorder(tdEV$phy, "postorder")
+tdD$phy <- reorder(tdD$phy, "postorder")
+#tdEV$phy$edge.length <- tdEV$phy$edge.length/max(branching.times(tdEV$phy))*100
+
+## Use diversitree to fit a meristic model:
+mknEV.lik <- make.mkn.meristic(tdEV$phy, tdEV[['binpred']], k = ncat)
+mknD.lik <- make.mkn.meristic(tdD$phy, tdD[['binpred']], k = ncat)
+mknEV.lik <- constrain(mknEV.lik, q.up~q.down)
+mknD.lik <- constrain(mknD.lik, q.up~q.down)
+p <- c(0.1)
+EVfit.mkn <- find.mle(mknEV.lik, p)
+Dfit.mkn <- find.mle(mknD.lik, p)
+
+Q.EV <- matrix(0, ncol=ncat-1, nrow=ncat-1)
+for(i in 1:(ncat-2)){
+  Q.EV[i, i+1] <- EVfit.mkn$par[1]
+  Q.EV[i+1, i] <- EVfit.mkn$par[1]
+}
+
+Q.D <- matrix(0, ncol=ncat-1, nrow=ncat-1)
+for(i in 1:(ncat-2)){
+  Q.D[i, i+1] <- Dfit.mkn$par[1]
+  Q.D[i+1, i] <- Dfit.mkn$par[1]
+}
+
+diag(Q.EV) <- apply(Q.EV, 1, sum)*-1
+diag(Q.D) <- apply(Q.D, 1, sum)*-1
+
+rownames(Q.EV) <- colnames(Q.EV) <- 1:ncol(Q.EV)
+rownames(Q.D) <- colnames(Q.D) <- 1:ncol(Q.D)
+
+simmap2bayou <- function(stree){
+  shifts <- sapply(stree$maps, function(x) names(x)[-1])
+  sb <- unlist(sapply(1:length(shifts), function(x) rep(x, length(shifts[[x]]))))
+  t2 <- as.numeric(unlist(sapply(stree$maps, function(x) names(x)[-1])))
+  loc <- unlist(sapply(stree$maps, function(x) cumsum(x)[-1]))
+  return(list(shifts=shifts, sb=sb, t2=t2, loc=loc))
+}
+#fdfit <- fitDiscrete(td$phy, td[['binpred']], model="meristic")
+#Qg <- geiger:::.Qmatrix.from.gfit(fdfit)
+#stree <- reorderSimmap(make.simmap(td$phy, td[['binpred']], Q=Q), "postorder")
+strees.EV <- make.simmap(tdEV$phy, tdEV[['binpred']], Q=Q.EV, nsim=100)
+strees.D <- make.simmap(tdD$phy, tdD[['binpred']], Q=Q.D, nsim=100)
+
+for(i in 1:length(strees.EV)) strees.EV[[i]] <- reorderSimmap(strees.EV[[i]], "postorder")
+for(i in 1:length(strees.D)) strees.D[[i]] <- reorderSimmap(strees.D[[i]], "postorder")
+
+EVtrees.bayou <- lapply(strees.EV, simmap2bayou)
+Dtrees.bayou <- lapply(strees.D, simmap2bayou)
+
+```
+
+```{r}
+saveRDS(EVtrees.bayou, file="../output/OUwie/EVtrees.rds")
+saveRDS(Dtrees.bayou, file="../output/OUwie/Dtrees.rds")
+EVtrees.bayou <- readRDS(file="../output/OUwie/EVtrees.rds")
+Dtrees.bayou <- readRDS(file="../output/OUwie/Dtrees.rds")
+
+
+```
+
+
+```{r}
+## Starting parameters for each function type:
+## Step function
+step.starts <- c(0, -8, -4)
+startpar.stepEVD <- list(
+  EV = list(alpha=1, sig2=1, 
+                 beta_left=step.starts[2], 
+                 beta_right=step.starts[3],
+                 beta_center=step.starts[1],
+                 k=length(EVtrees.bayou[[1]]$sb), ntheta=ncat-1, 
+                 theta=ifelse(midbins > step.starts[1], step.starts[3], step.starts[2]),
+                 sb=EVtrees.bayou[[1]]$sb, loc=EVtrees.bayou[[1]]$loc, t2=EVtrees.bayou[[1]]$t2), 
+  D = list(alpha=1, sig2=1, 
+                 beta_left=step.starts[2], 
+                 beta_right=step.starts[3],
+                 beta_center=step.starts[1],
+                 k=length(Dtrees.bayou[[1]]$sb), ntheta=ncat-1, 
+                 theta=ifelse(midbins > step.starts[1], step.starts[3], step.starts[2]),
+                 sb=Dtrees.bayou[[1]]$sb, loc=Dtrees.bayou[[1]]$loc, t2=Dtrees.bayou[[1]]$t2)
+)
+
+plot(midbins, startpar.stepEVD$EV$theta)
+
+
+sigmoid.starts <- list(beta_left = -2, beta_right = -6, beta_center = 0, beta_slope = 0.02)
+startpar.sigmoidEVD <- list(
+  EV = list(alpha=1, sig2=0.5, 
+                 beta_left=sigmoid.starts$beta_left, 
+                 beta_right=sigmoid.starts$beta_right,
+                 beta_center=sigmoid.starts$beta_center,
+                 beta_slope = sigmoid.starts$beta_slope,
+                 k=length(EVtrees.bayou[[1]]$sb), ntheta=ncat-1, 
+                 theta= sigmoid.starts$beta_left + sigmoid.starts$beta_right/(1 + exp(sigmoid.starts$beta_slope * (midbins - sigmoid.starts$beta_center))),
+                 sb=EVtrees.bayou[[1]]$sb, loc=EVtrees.bayou[[1]]$loc, t2=EVtrees.bayou[[1]]$t2),
+  D = list(alpha=1, sig2=0.5, 
+                 beta_left=sigmoid.starts$beta_left, 
+                 beta_right=sigmoid.starts$beta_right,
+                 beta_center=sigmoid.starts$beta_center,
+                 beta_slope = sigmoid.starts$beta_slope,
+                 k=length(Dtrees.bayou[[1]]$sb), ntheta=ncat-1, 
+                 theta= sigmoid.starts$beta_left + sigmoid.starts$beta_right/(1 + exp(sigmoid.starts$beta_slope * (midbins - sigmoid.starts$beta_center))),
+                 sb=Dtrees.bayou[[1]]$sb, loc=Dtrees.bayou[[1]]$loc, t2=Dtrees.bayou[[1]]$t2)
+)
+plot(midbins, startpar.sigmoidEVD$EV$theta)
+
+linear.starts <- list(beta_intercept = -5, beta_slope = 0.01)
+startpar.linearEVD <- list(
+  EV = list(alpha=1, sig2=0.5, 
+                 beta_intercept=linear.starts$beta_intercept, 
+                 beta_slope=linear.starts$beta_slope,
+                 k=length(EVtrees.bayou[[1]]$sb), ntheta=ncat-1, 
+                 theta= linear.starts$beta_intercept + linear.starts$beta_slope*midbins,
+                 sb=EVtrees.bayou[[1]]$sb, loc=EVtrees.bayou[[1]]$loc, t2=EVtrees.bayou[[1]]$t2),
+  D = list(alpha=1, sig2=0.5, 
+                 beta_intercept=linear.starts$beta_intercept, 
+                 beta_slope=linear.starts$beta_slope,
+                 k=length(EVtrees.bayou[[1]]$sb), ntheta=ncat-1, 
+                 theta= linear.starts$beta_intercept + linear.starts$beta_slope*midbins,
+                 sb=EVtrees.bayou[[1]]$sb, loc=EVtrees.bayou[[1]]$loc, t2=EVtrees.bayou[[1]]$t2)
+)
+plot(midbins, startpar.linearEVD$EV$theta)
+
+```
+
+```{r}
+## Set priors
+EV.fixed <- list(k=length(EVtrees.bayou[[1]]$sb), ntheta=ncat-1, sb=EVtrees.bayou[[1]]$sb, loc=EVtrees.bayou[[1]]$loc, t2=EVtrees.bayou[[1]]$t2)
+D.fixed <- list(k=length(Dtrees.bayou[[1]]$sb), ntheta=ncat-1, sb=Dtrees.bayou[[1]]$sb, loc=Dtrees.bayou[[1]]$loc, t2=Dtrees.bayou[[1]]$t2)
+prior.stepEVD <- list(
+  EV = make.prior(tdEV$phy, plot.prior = FALSE, 
+                          dists=list(dalpha="dlnorm", dsig2="dhalfcauchy", 
+                                     dbeta_left="dunif",
+                                     dbeta_right="dunif",
+                                     dbeta_center="dunif",
+                                     dsb="fixed", dk="fixed", 
+                                     dtheta="dnull", dloc="fixed"), 
+                          param=list(dalpha=list(meanlog=1, sdlog=1), dsig2=list(scale=0.1), 
+                                     dbeta_left=list(min=-12, max=0),
+                                     dbeta_right=list(min=-12, max=0),
+                                     dbeta_center=list(min=-100, max=100),
+                                     dk="fixed",
+                                     dsb="fixed", 
+                                     dtheta=list(), dloc="fixed"),
+                          fixed=EV.fixed),
+  D = make.prior(tdD$phy, plot.prior = FALSE, 
+                          dists=list(dalpha="dlnorm", dsig2="dhalfcauchy", 
+                                     dbeta_left="dunif",
+                                     dbeta_right="dunif",
+                                     dbeta_center="dunif",
+                                     dsb="fixed", dk="fixed", 
+                                     dtheta="dnull", dloc="fixed"), 
+                          param=list(dalpha=list(meanlog=1, sdlog=1), dsig2=list(scale=0.1), 
+                                     dbeta_left=list(min=-12, max=0),
+                                     dbeta_right=list(min=-12, max=0),
+                                     dbeta_center=list(min=-100, max=100),
+                                     dk="fixed",
+                                     dsb="fixed", 
+                                     dtheta=list(), dloc="fixed"),
+                          fixed=D.fixed)
+)
+  
+
+prior.sigmoidEVD <- list(
+  EV = make.prior(tdEV$phy, plot.prior = FALSE, 
+                          dists=list(dalpha="dlnorm", dsig2="dhalfcauchy", 
+                                     dbeta_left="dunif",
+                                     dbeta_right="dunif",
+                                     dbeta_center="dunif",
+                                     dbeta_slope="dlnorm",
+                                     dsb="fixed", dk="fixed", 
+                                     dtheta="dnull", dloc="fixed"), 
+                          param=list(dalpha=list(meanlog=1, sdlog=1), dsig2=list(scale=0.1), 
+                                     dbeta_left=list(min=-12, max=0),
+                                     dbeta_right=list(min=-12, max=0),
+                                     dbeta_center=list(min=-100, max=100),
+                                     dbeta_slope=list(meanlog=-3, sdlog=1),
+                                     dk="fixed",
+                                     dsb="fixed", 
+                                     dtheta=list(), dloc="fixed"),
+                          fixed=EV.fixed),
+  D = make.prior(tdD$phy, plot.prior = FALSE, 
+                          dists=list(dalpha="dlnorm", dsig2="dhalfcauchy", 
+                                     dbeta_left="dunif",
+                                     dbeta_right="dunif",
+                                     dbeta_center="dunif",
+                                     dbeta_slope="dlnorm",
+                                     dsb="fixed", dk="fixed", 
+                                     dtheta="dnull", dloc="fixed"), 
+                          param=list(dalpha=list(meanlog=1, sdlog=1), dsig2=list(scale=0.1), 
+                                     dbeta_left=list(min=-12, max=0),
+                                     dbeta_right=list(min=-12, max=0),
+                                     dbeta_center=list(min=-100, max=100),
+                                     dbeta_slope=list(meanlog=-3, sdlog=1),
+                                     dk="fixed",
+                                     dsb="fixed", 
+                                     dtheta=list(), dloc="fixed"),
+                          fixed=D.fixed)
+)
+
+prior.linearEVD <- list(
+  EV = make.prior(tdEV$phy, plot.prior = FALSE, 
+                          dists=list(dalpha="dlnorm", dsig2="dhalfcauchy", 
+                                     dbeta_intercept="dnorm",
+                                     dbeta_slope="dnorm",
+                                     dsb="fixed", dk="fixed", 
+                                     dtheta="dnull", dloc="fixed"), 
+                          param=list(dalpha=list(meanlog=1, sdlog=1), dsig2=list(scale=0.1), 
+                                     dbeta_intercept=list(mean=-6, sd=1.5),
+                                     dbeta_slope=list(mean=0, sd=0.1),
+                                     dk="fixed",
+                                     dsb="fixed", 
+                                     dtheta=list(), dloc="fixed"),
+                          fixed=EV.fixed),
+  D = make.prior(tdD$phy, plot.prior = FALSE, 
+                          dists=list(dalpha="dlnorm", dsig2="dhalfcauchy", 
+                                     dbeta_intercept="dnorm",
+                                     dbeta_slope="dnorm",
+                                     dsb="fixed", dk="fixed", 
+                                     dtheta="dnull", dloc="fixed"), 
+                          param=list(dalpha=list(meanlog=1, sdlog=1), dsig2=list(scale=0.1), 
+                                     dbeta_intercept=list(mean=-6, sd=1.5),
+                                     dbeta_slope=list(mean=0, sd=0.1),
+                                     dk="fixed",
+                                     dsb="fixed", 
+                                     dtheta=list(), dloc="fixed"),
+                          fixed=D.fixed)
+)
+```
+
+
+```{r}
+mymcmcEV.step <- bayou.makeMCMC(tdEV$phy, tdEV[[trait]], pred=tdEV['binpred'], SE=0.02, model=model.stepTheta, prior=prior.stepEVD$EV, startpar=startpar.stepEVD$EV, new.dir=TRUE, outname="stepThetaEV_r1", plot.freq=NULL, ticker.freq=1000, samp = 100)
+mymcmcD.step <- bayou.makeMCMC(tdD$phy, tdD[[trait]], pred=tdD['binpred'], SE=0.02, model=model.stepTheta, prior=prior.stepEVD$D, startpar=startpar.stepEVD$D, new.dir=TRUE, outname="stepThetaD_r1", plot.freq=NULL, ticker.freq=1000, samp = 100)
+
+mymcmcEV.sigmoid <- bayou.makeMCMC(tdEV$phy, tdEV[[trait]], pred=tdEV['binpred'], SE=0.02, model=model.sigmoidTheta, prior=prior.sigmoidEVD$EV, startpar=startpar.sigmoidEVD$EV, new.dir=TRUE, outname="sigmoidThetaEV_r1", plot.freq=NULL, ticker.freq=1000, samp = 100)
+mymcmcD.sigmoid <- bayou.makeMCMC(tdD$phy, tdD[[trait]], pred=tdD['binpred'], SE=0.02, model=model.sigmoidTheta, prior=prior.sigmoidEVD$D, startpar=startpar.sigmoidEVD$D, new.dir=TRUE, outname="sigmoidThetaD_r1", plot.freq=NULL, ticker.freq=1000, samp = 100)
+
+mymcmcEV.linear <- bayou.makeMCMC(tdEV$phy, tdEV[[trait]], pred=tdEV['binpred'], SE=0.02, model=model.linearTheta, prior=prior.linearEVD$EV, startpar=startpar.linearEVD$EV, new.dir=TRUE, outname="linearThetaEV_r1", plot.freq=NULL, ticker.freq=1000, samp = 100)
+mymcmcD.linear <- bayou.makeMCMC(tdD$phy, tdD[[trait]], pred=tdD['binpred'], SE=0.02, model=model.linearTheta, prior=prior.linearEVD$D, startpar=startpar.linearEVD$D, new.dir=TRUE, outname="linearThetaD_r1", plot.freq=NULL, ticker.freq=1000, samp = 100)
+
+```
+
+
+```{r}
+strees.bayou <- EVtrees.bayou
+mymcmcEV.step$run(100000)
+chainEV.step <- mymcmcEV.step$load()
+chainEV.step <- set.burnin(chainEV.step, 0.3)
+plot(chainEV.step)
+
+strees.bayou <- Dtrees.bayou
+mymcmcD.step$run(100000)
+chainD.step <- mymcmcD.step$load()
+chainD.step <- set.burnin(chainD.step, 0.3)
+plot(chainD.step)
+
+```
+
+```{r}
+strees.bayou <- EVtrees.bayou
+mymcmcEV.sigmoid$run(100000)
+chainEV.sigmoid <- mymcmcEV.sigmoid$load()
+chainEV.sigmoid <- set.burnin(chainEV.sigmoid, 0.3)
+plot(chainEV.sigmoid)
+
+strees.bayou <- Dtrees.bayou
+mymcmcD.sigmoid$run(100000)
+chainD.sigmoid <- mymcmcD.sigmoid$load()
+chainD.sigmoid <- set.burnin(chainD.sigmoid, 0.3)
+plot(chainD.sigmoid)
+```
+
+
+
+```{r}
+strees.bayou <- EVtrees.bayou
+mymcmcEV.linear$run(100000)
+chainEV.linear <- mymcmcEV.linear$load()
+chainEV.linear <- set.burnin(chainEV.linear, 0.3)
+plot(chainEV.linear)
+
+strees.bayou <- Dtrees.bayou
+mymcmcD.linear$run(100000)
+chainD.linear <- mymcmcD.linear$load()
+chainD.linear <- set.burnin(chainD.linear, 0.3)
+plot(chainD.linear)
+```
+
+```{r}
+optimizeModelsOverSimmap <- function(i, strees.bayou=strees.bayou, chain.sigmoid=chain.sigmoid, chain.linear=chain.linear, chain.step=chain.step, cache = cache){
+  sb <- strees.bayou[[i]]$sb
+  t2 <- strees.bayou[[i]]$t2
+  loc <- strees.bayou[[i]]$loc
+  k <- length(sb)
+  ntheta <- ncat - 1
+lik.sigmoid <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = pp[5],
+               beta_slope = pp[6],
+               k = k, 
+               ntheta=ntheta,
+               theta = pp[3] + pp[4]/(1 + exp(pp[6] * (midbins - pp[5]))),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.sigmoidTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+
+lik.sigmoid0 <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = 0,
+               beta_slope = pp[5],
+               k = k, 
+               ntheta=ntheta,
+               theta = pp[3] + pp[4]/(1 + exp(pp[5] * (midbins - 0))),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.sigmoidTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+
+lik.tanhLin <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = pp[5],
+               beta_slope = pp[6],
+               k = k, 
+               ntheta=ntheta,
+               theta = pp[3] + pp[6]*midbins + pp[4]*tanh(midbins - pp[5]),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.sigmoidTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+
+## Parameter order: alpha, sig2, beta_left, beta_right, beta_center, beta_slope
+pars.sigmoid <- pull.pars(length(chain.sigmoid$gen), chain.sigmoid, model.sigmoidTheta)
+pp.sigmoid <- unname(c(pars.sigmoid$alpha, pars.sigmoid$sig2, pars.sigmoid$beta_left, pars.sigmoid$beta_right, pars.sigmoid$beta_center, pars.sigmoid$beta_slope))
+
+pp.sigmoid0 <- pp.sigmoid[-5]
+
+lik.step <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = pp[5],
+               k = k, 
+               ntheta=ntheta,
+               theta = ifelse(midbins>pp[5], pp[4], pp[3]),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.stepTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+
+lik.step0 <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_left = pp[3],
+               beta_right = pp[4], 
+               beta_center = 0,
+               k = k, 
+               ntheta=ntheta,
+               theta = ifelse(midbins>0, pp[4], pp[3]),
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.stepTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+## Parameter order: alpha, sig2, beta_left, beta_right, beta_center, beta_slope
+pars.step <- pull.pars(length(chain.step$gen), chain.step, model.stepTheta)
+pp.step <- unname(c(pars.step$alpha, pars.step$sig2, pars.step$beta_left, pars.step$beta_right, pars.step$beta_center))
+pp.step0 <- pp.step[-5]
+
+lik.linear <- function(pp){
+  pars <- list(alpha = pp[1],
+               sig2 = pp[2], 
+               beta_intercept = pp[3],
+               beta_slope = pp[4], 
+               k = k, 
+               ntheta=ntheta,
+               theta = pp[3] + pp[4]*midbins,
+               sb = sb, 
+               loc=loc,
+               t2=t2)
+  model.linearTheta$lik.fn(pars, cache, cache$dat)$loglik[,1]
+}
+## Parameter order: alpha, sig2, beta_left, beta_right, beta_center, beta_slope
+pars.linear <- pull.pars(length(chain.linear$gen), chain.linear, model.linearTheta)
+pp.linear <- unname(c(pars.linear$alpha, pars.linear$sig2, pars.linear$beta_intercept, pars.linear$beta_slope))
+
+pp.tanhLin <- unname(c(pars.linear$alpha, pars.linear$sig2, pars.linear$beta_intercept, rnorm(1), runif(1, -10, 10), pars.linear$beta_slope))
+
+opt.sigmoid <- optimx(pp.sigmoid, lik.sigmoid, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-12,-200, -0.1), 
+                      upper=c(2000, 2000, 0, 0, 200, 10))
+opt.step <- optimx(pp.step, lik.step, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-12,-200), 
+                      upper=c(2000, 2000, 0, 0, 200))
+opt.sigmoid0 <- optimx(pp.sigmoid0, lik.sigmoid0, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-12,-0.1), 
+                      upper=c(2000, 2000, 0, 0, 10))
+opt.step0 <- optimx(pp.step0, lik.step0, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-12), 
+                      upper=c(2000, 2000, 0, 0))
+opt.linear <- optimx(pp.linear, lik.linear, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12,-1), 
+                      upper=c(2000, 2000, 0, 1))
+
+opt.tanhLin <- optimx(pp.tanhLin, lik.tanhLin, control=list(maximize=TRUE), method=c('nlminb'), lower=c(0,0,-12, -5,-200, -1), upper=c(2000, 2000, 0, 5, 200, 1))
+
+aics <- list()
+aics[['aic.sigmoid']] <- 2*6 - 2*opt.sigmoid$value
+aics[['aic.step']] <- 2*5 - 2*opt.step$value
+aics[['aic.linear']] <- 2*4 - 2*opt.linear$value
+aics[['aic.sigmoid0']] <- 2*5 - 2*opt.sigmoid0$value
+aics[['aic.step0']] <- 2*4 - 2*opt.step0$value
+aics[['aic.tanhLin']] <- 2*6 - 2*opt.tanhLin$value
+aics
+
+return(list(opt.sigmoid=opt.sigmoid, opt.linear=opt.linear, opt.step=opt.step, opt.sigmoid0=opt.sigmoid0, opt.step0=opt.step0, opt.tanhLin=opt.tanhLin, aics=aics))
+}
+```
+
+
+```{r}
+require(optimx)
+cacheEV <- bayou:::.prepare.ou.univariate(tdEV$phy, tdEV[['lnVs']], SE=0.02, pred=tdEV['binpred'])
+cacheD <- bayou:::.prepare.ou.univariate(tdD$phy, tdD[['lnVs']], SE=0.02, pred=tdD['binpred'])
+EVopt.allmodels <- lapply(1:100, optimizeModelsOverSimmap, strees.bayou=EVtrees.bayou, chain.sigmoid = chainEV.sigmoid, chain.step=chainEV.step, chain.linear=chainEV.linear, cache = cacheEV)
+Dopt.allmodels <- lapply(1:100, optimizeModelsOverSimmap, strees.bayou=Dtrees.bayou, chain.sigmoid = chainD.sigmoid, chain.step=chainD.step, chain.linear=chainD.linear, cache = cacheD)
+
+```
+
+```{r}
+summarizeAllOpt <- function(opt.allmodels, cutoff=-Inf){
+  all.sigmoid <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.sigmoid))
+  all.step <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.step))
+  all.sigmoid0 <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.sigmoid0))
+  all.step0 <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.step0))
+  all.linear <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.linear))
+  all.tanhLin <- do.call(rbind, lapply(opt.allmodels, function(x) x$opt.tanhLin))
+  all.aics <- do.call(rbind, lapply(opt.allmodels, function(x) do.call(cbind, x$aics)))
+  all.aics[all.aics < cutoff] <- NA
+  boxplot(all.aics)
+  all.aics <- as.data.frame(all.aics)
+  t.test(all.aics$aic.sigmoid, all.aics$aic.linear, paired = TRUE)
+  hist(all.aics$aic.linear - all.aics$aic.sigmoid)
+  tmp <- reshape2::melt(all.aics)
+  aicws <- aicw(tmp$value)$w
+  aicws <- round(tapply(aicws, tmp$variable, sum),2)
+  return(list(sigmoid=all.sigmoid, step=all.step, sigmoid0=all.sigmoid0, step0 = all.step0, linear=all.linear, tanhLin=all.tanhLin, aics=all.aics, aicws=aicws))
+}
+sumEV <- summarizeAllOpt(EVopt.allmodels)
+sumD <- summarizeAllOpt(Dopt.allmodels)
+
+```
+
+```{r}
+sumEV$aicws
+sumD$aicws
+```
+
+```{r}
+dAICs <- apply(sumEV$aics, 1, function(x) x-min(x, na.rm=TRUE))
+par(mar=c(10, 4, 1,1))
+boxplot(t(dAICs), las=2, xlab="Model", ylab="dAIC", main="EV")
+boxplot(t(dAICs), las=2, xlab="Model", ylab="dAIC", main="EV", ylim=c(0,50))
+cat("Mean Evergreen dAIC values\n")
+apply(t(dAICs), 2, mean)
+
+```
+```{r}
+dAICs <- apply(sumD$aics, 1, function(x) x-min(x, na.rm=TRUE))
+par(mar=c(10, 4, 1,1))
+boxplot(t(dAICs), las=2, xlab="Model", ylab="dAIC", main="D")
+boxplot(t(dAICs), las=2, xlab="Model", ylab="dAIC",main="D", ylim=c(0,8))
+cat("Mean Deciduous dAIC values\n")
+apply(t(dAICs), 2, mean)
+
+```
+
+
+```{r}
+plot(td[['tmin.01']], td[['lnVs']], bg=c("tan","green")[as.numeric(td[['phenology']])], main="Temperature vs. vessel size", pch=21)
+x <- -600:200
+abline(v=0)
+
+dum <- lapply(1:nrow(sumEV$sigmoid), function(i) lines(x, sumEV$sigmoid[i, 3] + sumEV$sigmoid[i, 4]/(1 + exp(sumEV$sigmoid[i, 6]*(x-sumEV$sigmoid[i, 5]))), col="green", lty=1))
+dum <- lapply(1:nrow(sumEV$sigmoid0), function(i) lines(x, sumEV$sigmoid0[i, 3] + sumEV$sigmoid0[i, 4]/(1 + exp(sumEV$sigmoid0[i, 5]*(x-0))), col="limegreen", lty=1))
+
+#dum <- lapply(1:nrow(sumEV$tanhLin), function(i) lines(x, sumEV$tanhLin[i, 3] + sumEV$tanhLin[i,6]*x + sumEV$tanhLin[i,4]*tanh(x-sumEV$tanhLin[i,5]), col="green", lty=1))
+
+dum <- lapply(1:nrow(sumD$linear), function(i) lines(x, sumD$linear[i,3] + sumD$linear[i,4]*x, col="orange2", lty=1))
+dum <- lapply(1:nrow(sumD$sigmoid0), function(i) lines(x, sumD$sigmoid0[i, 3] + sumD$sigmoid0[i, 4]/(1 + exp(sumD$sigmoid0[i, 5]*(x-0))), col="orange", lty=1))
+
+
+#dum <- lapply(1:nrow(sumD$sigmoid0), function(i) lines(x, sumD$sigmoid0[i, 3] + sumD$sigmoid0[i,4]/(1+exp(sumD$sigmoid0[i,5]*x)), col="tan", lty=1))
+
+
+
+```
+
+```{r}
+plot(td[['tmin.01']], td[['lnVs']], bg=c("tan","green")[as.numeric(td[['phenology']])], main="Temperature vs. vessel size", pch=21, xlab = "Temp (Cx10)", ylab="Log Vessel Diameter")
+x <- -400:200
+abline(v=0)
+
+dum <- lapply(seq(1, length(chainEV.sigmoid$gen), 1), function(i) lines(x, chainEV.sigmoid$beta_left[i]+chainEV.sigmoid$beta_right[i]/(1 + exp(chainEV.sigmoid$beta_slope[i]*(x-chainEV.sigmoid$beta_center[i]))), col=makeTransparent(rgb(0, 1, 0), alpha=10)))
+
+dum <- lapply(seq(1, length(chainD.linear$gen), 1), function(i) lines(x, chainD.linear$beta_intercept[i]+chainD.linear$beta_slope[i]*x, col=makeTransparent(rgb(0.9, 0.5, 0.2), alpha=10)))
+
+```
+
