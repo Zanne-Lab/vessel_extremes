@@ -60,7 +60,12 @@ dev.off()
 pdf("../output/figures/figure_2_precip_seas.pdf")
 with(data, plot(log(vesselSize) ~ pseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab="Precipitation seasonality", ylab="Log Conduit Diameter", cex=1.5))
 dev.off()
-
+pdf("../output/figures/figure_2_lat_lower.pdf")
+with(data, plot(log(vesselSize) ~ tmin.025, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Minimum temperature (",degree,"C)")), ylab="Log Conduit Diameter", cex=1.5))
+dev.off()
+pdf("../output/figures/figure_2_lat_upper.pdf")
+with(data, plot(log(vesselSize) ~ tmin.025, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Minimum temperature (",degree,"C)")), ylab="Log Conduit Diameter", cex=1.5))
+dev.off()
 
 
 
