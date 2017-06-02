@@ -1,6 +1,30 @@
-# Load data
+# Load original data
 data <- read.csv("WoodyClimateHemi.12May.csv")
 data$herb <- data$woodiness=="H"
+original <- data
+
+# Load new data
+growth.form <- read.csv("speciesTraitDataAEZ3.csv", as.is=TRUE)
+env <- read.csv("datasets/species_summaries_all.csv", as.is=TRUE)
+env$species <- read.csv("datasets/species_list.csv", as.is=TRUE)[,2]
+data <- merge(growth.form, env, by.x="gs", by.y="species")
+data <- data[!duplicated(data$gs),]
+
+
+missing <- setdiff(data$gs, original$species)
+common <- intersect(data$gs, original$species)
+
+original <- setNames(original$southLat.lo, original$species)
+new <- setNames(data$decimallatitude.025, data$gs)
+new <- new[names(new) %in% names(original)]
+original <- original[names(original) %in% names(new)]
+new <- new[order(names(new))]
+original <- original[order(names(original))]
+identical(names(new), names(original))
+#new <- new/10
+
+plot(new, original)
+cor.test(new, original)
 
 plot.herb <- function(var, data, by, ...){
     bins <- with(data, seq(min(data[,var]),max(data[,var]),by=by))
@@ -18,4 +42,6 @@ plot.herb <- function(var, data, by, ...){
 data <- data[,c("species","herb","tmin.lo")]
 data <- na.omit(data)
 
+pdf("~/Desktop/demo.pdf")
 plot.herb("tmin.lo", data, by=5)
+dev.off()

@@ -1,0 +1,33 @@
+
+Call:
+glm(formula = herb ~ tmin.025 + I(log10(pmin.025 + 1)) + pseas.975 + 
+    tseas.975 + decimallatitude.025 + decimallatitude.025.sq + 
+    decimallatitude.975 + decimallatitude.975.sq, family = binomial, 
+    data = data, na.action = "na.pass")
+
+Deviance Residuals: 
+    Min       1Q   Median       3Q      Max  
+-2.6083  -0.8801  -0.5928   1.0291   2.3006  
+
+Coefficients:
+                         Estimate Std. Error z value Pr(>|z|)    
+(Intercept)             6.519e-01  1.089e-01   5.985 2.16e-09 ***
+tmin.025               -8.148e-02  2.613e-03 -31.184  < 2e-16 ***
+I(log10(pmin.025 + 1)) -5.080e-01  3.637e-02 -13.970  < 2e-16 ***
+pseas.975              -6.826e-03  8.255e-04  -8.270  < 2e-16 ***
+tseas.975              -9.504e-05  8.819e-06 -10.776  < 2e-16 ***
+decimallatitude.025    -7.251e-03  7.076e-04 -10.247  < 2e-16 ***
+decimallatitude.025.sq  4.140e-04  3.222e-05  12.850  < 2e-16 ***
+decimallatitude.975     1.100e-02  8.035e-04  13.693  < 2e-16 ***
+decimallatitude.975.sq  3.759e-05  2.557e-05   1.470    0.142    
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+(Dispersion parameter for binomial family taken to be 1)
+
+    Null deviance: 52983  on 39669  degrees of freedom
+Residual deviance: 45325  on 39661  degrees of freedom
+AIC: 45343
+
+Number of Fisher Scoring iterations: 4
+

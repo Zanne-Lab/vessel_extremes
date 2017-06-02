@@ -1,0 +1,66 @@
+
+Call:
+model.avg(object = s.conduit.model.set, subset = delta < 4)
+
+Component model call: 
+lm(formula = log(vesselSize) ~ <8 unique rhs>, data = data, na.action = 
+     na.pass)
+
+Component models: 
+          df  logLik    AICc delta weight
+1234578    9 -748.45 1515.26  0.00   0.28
+1234568    9 -748.78 1515.92  0.66   0.20
+12345789  10 -748.21 1516.87  1.61   0.12
+12345678  10 -748.23 1516.90  1.64   0.12
+123458     8 -750.45 1517.18  1.92   0.11
+12345689  10 -748.70 1517.85  2.58   0.08
+123456789 11 -748.03 1518.60  3.33   0.05
+1234589    9 -750.41 1519.18  3.92   0.04
+
+Term codes: 
+   decimallatitude.025 decimallatitude.025.sq    decimallatitude.975 
+                     1                      2                      3 
+decimallatitude.975.sq              phenology               pmin.025 
+                     4                      5                      6 
+             pseas.975               tmin.025              tseas.975 
+                     7                      8                      9 
+
+Model-averaged coefficients:  
+(full average) 
+                         Estimate Std. Error Adjusted SE z value Pr(>|z|)    
+(Intercept)            -5.267e+00  3.357e-01   3.361e-01  15.668  < 2e-16 ***
+decimallatitude.025    -1.008e-02  2.473e-03   2.479e-03   4.068 4.74e-05 ***
+decimallatitude.025.sq -6.133e-04  1.265e-04   1.268e-04   4.839 1.30e-06 ***
+decimallatitude.975     2.523e-03  3.897e-03   3.905e-03   0.646 0.518169    
+decimallatitude.975.sq -3.097e-04  1.018e-04   1.020e-04   3.036 0.002395 ** 
+phenology               7.107e-01  1.067e-01   1.070e-01   6.643  < 2e-16 ***
+pseas.975               2.381e-03  2.822e-03   2.825e-03   0.843 0.399209    
+tmin.025                3.707e-04  1.109e-04   1.112e-04   3.334 0.000855 ***
+pmin.025               -2.017e-03  3.398e-03   3.402e-03   0.593 0.553245    
+tseas.975              -7.082e-06  2.690e-05   2.696e-05   0.263 0.792768    
+ 
+(conditional average) 
+                         Estimate Std. Error Adjusted SE z value Pr(>|z|)    
+(Intercept)            -5.267e+00  3.357e-01   3.361e-01  15.668  < 2e-16 ***
+decimallatitude.025    -1.009e-02  2.473e-03   2.479e-03   4.068 4.74e-05 ***
+decimallatitude.025.sq -6.133e-04  1.265e-04   1.267e-04   4.839 1.30e-06 ***
+decimallatitude.975     2.523e-03  3.897e-03   3.905e-03   0.646 0.518169    
+decimallatitude.975.sq -3.097e-04  1.018e-04   1.020e-04   3.036 0.002395 ** 
+phenology               7.107e-01  1.067e-01   1.070e-01   6.643  < 2e-16 ***
+pseas.975               4.122e-03  2.570e-03   2.576e-03   1.600 0.109614    
+tmin.025                3.707e-04  1.109e-04   1.112e-04   3.334 0.000855 ***
+pmin.025               -4.469e-03  3.824e-03   3.832e-03   1.166 0.243597    
+tseas.975              -2.420e-05  4.538e-05   4.548e-05   0.532 0.594694    
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Relative variable importance: 
+                     decimallatitude.025 decimallatitude.025.sq
+Importance:          1.00                1.00                  
+N containing models:    8                   8                  
+                     decimallatitude.975 decimallatitude.975.sq phenology
+Importance:          1.00                1.00                   1.00     
+N containing models:    8                   8                      8     
+                     tmin.025 pseas.975 pmin.025 tseas.975
+Importance:          1.00     0.58      0.45     0.29     
+N containing models:    8        4         4        4     
