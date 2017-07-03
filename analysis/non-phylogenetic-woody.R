@@ -15,7 +15,7 @@ data <- data[!duplicated(data$gs),]
 
 # Subset data to only the needed variables; rescale/re-code
 data <- data[,c("gs","tmin.025","pmin.025","tseas.975","pseas.975","gbif.records","decimallatitude.025","decimallatitude.975","vesselSize","phenology")]
-data$tmin.025 <- data$tmin.025*10
+data$tmin.025 <- data$tmin.025/10
 data$phenology <- as.numeric(data$phenology=="D")
 data <- na.omit(data)
 
@@ -38,7 +38,7 @@ s.data$vesselSize <- data$vesselSize
 s.data$decimallatitude.975.sq <- s.data$decimallatitude.975^2
 s.data$decimallatitude.025.sq <- s.data$decimallatitude.025^2
 s.conduit.model <- lm(log(vesselSize) ~ tmin.025 + pmin.025 + pseas.975 + tseas.975 + phenology + decimallatitude.025 + decimallatitude.025.sq + decimallatitude.975 + decimallatitude.975.sq, data=s.data, na.action="na.pass")
-s.conduit.model.set <- dredge(conduit.model, subset=dc(decimallatitude.975,decimallatitude.975.sq,decimallatitude.975) & dc(decimallatitude.025,decimallatitude.025.sq,decimallatitude.025))
+s.conduit.model.set <- dredge(s.conduit.model, subset=dc(decimallatitude.975,decimallatitude.975.sq,decimallatitude.975) & dc(decimallatitude.025,decimallatitude.025.sq,decimallatitude.025))
 s.conduit.model.avg <- model.avg(s.conduit.model.set, subset=delta<4)
 summary(s.conduit.model.avg)
 sink("../output/nonphylo_models/conduit_scaled.txt")
@@ -47,23 +47,49 @@ sink(NULL)
 #...all good.
 
 # Plots
+
 pdf("../output/figures/figure_2_temp.pdf")
-with(data, plot(log(vesselSize) ~ tmin.025, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Minimum temperature (",degree,"C)")), ylab="Log Conduit Diameter", cex=1))
+par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
+with(data, plot(log(vesselSize) ~ tmin.025, data=data, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Minimum temperature (",degree,"C)")), ylab="Log Conduit Area", type="n"))
+abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
+with(data, points(log(vesselSize) ~ tmin.025, data=data, pch=21, bg=ifelse(phenology, "black", "white")))
 dev.off()
+
 pdf("../output/figures/figure_2_precip.pdf")
-with(data, plot(log(vesselSize) ~ pmin.025, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab="Minimum precipitation (mm)", ylab="Log Conduit Diameter", cex=1))
+par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
+with(data, plot(log(vesselSize) ~ I(log(pmin.025+exp(1))), data=data, xlab="Log minimum precipitation (log[mm])", ylab="Log Conduit Area", type="n"))
+fg <- bg <- ifelse(data$tmin.025>0, "red", "blue")
+bg <- ifelse(data$phenology, bg, "white")
+abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
+with(data, points(log(vesselSize) ~ I(log(pmin.025+exp(1))), data=data, pch=21, col=fg, bg=bg))
 dev.off()
+
 pdf("../output/figures/figure_2_temp_seas.pdf")
-with(data, plot(log(vesselSize) ~ tseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab="Temperature seasonality", ylab="Log Conduit Diameter", cex=1))
+par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
+with(data, plot(log(vesselSize) ~ tseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab="Temperature seasonality", ylab="Log Conduit Area", type="n"))
+abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
+with(data, points(log(vesselSize) ~ tseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white")))
 dev.off()
+
 pdf("../output/figures/figure_2_precip_seas.pdf")
-with(data, plot(log(vesselSize) ~ pseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab="Precipitation seasonality", ylab="Log Conduit Diameter", cex=1))
+par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
+with(data, plot(log(vesselSize) ~ pseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab="Precipitation seasonality", ylab="Log Conduit Area", type="n"))
+abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
+with(data, points(log(vesselSize) ~ pseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white")))
 dev.off()
+
 pdf("../output/figures/figure_2_lat_lower.pdf")
-with(data, plot(log(vesselSize) ~ decimallatitude.025, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Minimum Southern latitude (",degree,")")), ylab="Log Conduit Diameter", cex=1, xlim=c(-60,0)))
+par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
+with(data, plot(log(vesselSize) ~ decimallatitude.025, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Minimum latitude (",degree,")")), ylab="Log Conduit Area", type="n", xlim=c(-60,0)))
+abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
+with(data, points(log(vesselSize) ~ decimallatitude.025, data=data, pch=21, bg=ifelse(phenology, "black", "white")))
 dev.off()
+
 pdf("../output/figures/figure_2_lat_upper.pdf")
-with(data, plot(log(vesselSize) ~ decimallatitude.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Upper Northern latitude (",degree,")")), ylab="Log Conduit Diameter", cex=1, xlim=c(0,70)))
+par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
+with(data, plot(log(vesselSize) ~ decimallatitude.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Maximum latitude (",degree,")")), ylab="Log Conduit Area", type="n", xlim=c(0,70)))
+abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
+with(data, points(log(vesselSize) ~ decimallatitude.975, data=data, pch=21, bg=ifelse(phenology, "black", "white")))
 dev.off()
 
 
