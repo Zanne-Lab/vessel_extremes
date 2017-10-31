@@ -94,16 +94,16 @@ geo <- glm(herb ~ decimallatitude.025 + I(decimallatitude.025^2) +
            data=data, family=binomial, na.action="na.pass")
 
 
-clim_only = adjR2(full) - adjR2(clim)
-geo_only = adjR2(full) - adjR2(geo)
+clim_only = adjR2(full) - adjR2(geo)
+geo_only = adjR2(full) - adjR2(clim)
 shared = adjR2(full) - clim_only - geo_only
 unexp = 1 - adjR2(full)
 
 vegan::showvarparts(2)
-clim_only   #[a] = 0.01 
-shared      #[b] = 0.10 
-geo_only    #[c] = 0.28 
-unexpl      #[d] = 0.86 
+clim_only   #[a] = 0.03 
+shared      #[b] = 0.11 
+geo_only    #[c] = 0.01 
+unexp       #[d] = 0.86 
 
 # AIC dredging --------------
 model <- glm(herb ~ tmin.025 + I(log10(pmin.025+1)) + pseas.975 + tseas.975, data=data, family=binomial, na.action="na.pass")
