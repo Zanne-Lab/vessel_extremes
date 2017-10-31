@@ -76,7 +76,36 @@ for(var in names(s.data)[1:6])
 
 
 # Let's do some modelling
+# Variation partitioning ---------
+# Using McFadden's adjusted psuedo R2
+# https://stats.idre.ucla.edu/other/mult-pkg/faq/general/faq-what-are-pseudo-r-squareds/
+adjR2 = function(m)  {
+    1 - ((m$deviance - length(m$coef) + 1) / m$null.deviance)
+}
 
+full <- glm(herb ~ tmin.025 + I(log10(pmin.025+1)) + pseas.975 + tseas.975 +
+            decimallatitude.025 + I(decimallatitude.025^2) +
+            decimallatitude.975 + I(decimallatitude.975^2),
+            data=data, family=binomial, na.action="na.pass")
+clim <- glm(herb ~ tmin.025 + I(log10(pmin.025+1)) + pseas.975 + tseas.975,
+            data=data, family=binomial, na.action="na.pass")
+geo <- glm(herb ~ decimallatitude.025 + I(decimallatitude.025^2) +
+           decimallatitude.975 + I(decimallatitude.975^2),
+           data=data, family=binomial, na.action="na.pass")
+
+
+clim_only = adjR2(full) - adjR2(clim)
+geo_only = adjR2(full) - adjR2(geo)
+shared = adjR2(full) - clim_only - geo_only
+unexp = 1 - adjR2(full)
+
+vegan::showvarparts(2)
+clim_only   #[a] = 0.01 
+shared      #[b] = 0.10 
+geo_only    #[c] = 0.28 
+unexpl      #[d] = 0.86 
+
+# AIC dredging --------------
 model <- glm(herb ~ tmin.025 + I(log10(pmin.025+1)) + pseas.975 + tseas.975, data=data, family=binomial, na.action="na.pass")
 model.set <- dredge(model)
 # Hooray! Only one model! The model wih everything in it :D
