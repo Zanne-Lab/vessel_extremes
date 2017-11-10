@@ -1,6 +1,6 @@
 
 Call:
-glm(formula = herb ~ tmin.025 + I(log10(pmin.025 + 1)) + pseas.975 + 
+glm(formula = herb ~ tmin.025 + I(log(pmin.025 + 1)) + pseas.975 + 
     tseas.975 + decimallatitude.025 + decimallatitude.025.sq + 
     decimallatitude.975 + decimallatitude.975.sq, family = binomial, 
     data = data, na.action = "na.pass")
@@ -13,7 +13,7 @@ Coefficients:
                          Estimate Std. Error z value Pr(>|z|)    
 (Intercept)             6.634e-01  1.140e-01   5.817 5.98e-09 ***
 tmin.025               -7.867e-02  2.757e-03 -28.540  < 2e-16 ***
-I(log10(pmin.025 + 1)) -6.165e-01  3.794e-02 -16.249  < 2e-16 ***
+I(log(pmin.025 + 1))   -2.677e-01  1.648e-02 -16.249  < 2e-16 ***
 pseas.975              -7.925e-03  8.575e-04  -9.241  < 2e-16 ***
 tseas.975              -7.737e-05  9.233e-06  -8.379  < 2e-16 ***
 decimallatitude.025    -6.151e-03  7.345e-04  -8.375  < 2e-16 ***
