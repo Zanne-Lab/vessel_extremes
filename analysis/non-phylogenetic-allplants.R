@@ -9,6 +9,10 @@ env <- read.csv("../datasets/species_summaries_all.csv", as.is=TRUE)
 data <- merge(growth.form, env, by.x="gs", by.y="X")
 data <- data[!duplicated(data$gs),]
 
+# Remove non-angiosperms (using list from TPL)
+non.angio <- read.table("../datasets/non-angio-genera.txt", header=FALSE, as.is=TRUE)[,1]
+data <- data[!data$g %in% non.angio,]
+
 # Subset data to only the needed variables; recode
 data <- data[,c("gs","tmin.025","pmin.025","tseas.975","pseas.975","decimallatitude.025","decimallatitude.975","gbif.records","woodiness")]
 data$tmin.025 <- data$tmin.025/10
@@ -19,10 +23,11 @@ data <- na.omit(data)
 plot.herb <- function(var, data, by, ...){
     bins <- with(data, seq(min(data[,var]),max(data[,var]),by=by))
     x <- with(data, table(cut(data[,var],bins), herb))[-1,]
-    weight <- as.numeric(scale(rowSums(x)[-1]))
-    weight <- (weight - min(weight) + 1) * 2
+    #weight <- as.numeric(scale(rowSums(x)[-1]))
+    #weight <- (weight - min(weight) + 1) * 2
+    weight <- (log10(rowSums(x)[-1]) - 1) * 3
     x <- apply(x, 1, function(y) y[2]/sum(y))
-    plot(x ~ bins[-1:-2], type="n", axes=FALSE, ylab="Proportion herbaceous", ylim=c(0,1), lwd=weight, ...)
+    plot(x ~ bins[-1:-2], type="n", axes=FALSE, ylab="Proportion Herbaceous", ylim=c(0,1), lwd=weight, ...)
     for(i in seq_along(x))
         lines(bins[(i+2):(i+3)], x[i:(i+1)], lwd=weight[i])
     axis(1)
@@ -30,27 +35,28 @@ plot.herb <- function(var, data, by, ...){
 }
 pdf("../output/figures/figure_1_temp.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-plot.herb("tmin.025", data, by=5, xlab=expression(paste("Minimum temperature (",degree,")")))
+plot.herb("tmin.025", data, by=5, xlab=expression(paste("Minimum Temperature (",degree,")")))
 dev.off()
 pdf("../output/figures/figure_1_precip.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-plot.herb("pmin.025", data, by=20, xlim=c(0,250), xlab="Minimum precipitation (mm)")
+plot.herb("pmin.025", data, by=20, xlim=c(0,250), xlab="Minimum Precipitation (mm)")
 dev.off()
 pdf("../output/figures/figure_1_temp_seas.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-plot.herb("tseas.975", data, by=500, xlim=c(0,15000), xlab="Temperature seasonality")
+plot.herb("tseas.975", data, by=500, xlim=c(0,15000), xlab="Temperature Seasonality")
 dev.off()
 pdf("../output/figures/figure_1_precip_seas.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-plot.herb("pseas.975", data, by=20, xlim=c(0,200), xlab="Temperature seasonality")
+plot.herb("pseas.975", data, by=20, xlim=c(0,200), xlab="Precipitation Seasonality")
 dev.off()
 pdf("../output/figures/figure_1_lat_lower.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-plot.herb("decimallatitude.025", data, by=5, xlim=c(-60,0), xlab=expression(paste("Minimum latitude (",degree,")")))
+plot.herb("decimallatitude.025", data, by=5, xlim=c(-60,0), xlab=expression(paste("Minimum Latitude (",degree,")")))
+legend("topright", legend=c(100,1000,10000), lwd=log10(c(100,1000,10000)-1)*3, bty="n", title="Number of species", horiz=TRUE)
 dev.off()
 pdf("../output/figures/figure_1_lat_upper.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-plot.herb("decimallatitude.975", data, by=5, xlim=c(0,90), xlab=expression(paste("Maximum latitude (",degree,")")))
+plot.herb("decimallatitude.975", data, by=5, xlim=c(0,90), xlab=expression(paste("Maximum Latitude (",degree,")")))
 dev.off()
 
 # Let's see if we can get them all on the same plot...
@@ -68,7 +74,7 @@ line.herb <- function(var, data, by, ...){
         lines(bins[(i+2):(i+3)], x[i:(i+1)], lwd=weight[i])
 }
 
-plot(1, type="n", xlim=c(-5,5), ylim=c(0,1), xlab="", ylab="Proportion herbaceous")
+plot(1, type="n", xlim=c(-5,5), ylim=c(0,1), xlab="", ylab="Proportion Hherbaceous")
 for(var in names(s.data)[1:6])
     line.herb(var, s.data, .25)
 #...OK, it works, but it looks dreadful...
@@ -109,12 +115,7 @@ sink("../output/nonphylo_models/extremes_scaled.txt")
 summary(model)
 sink(NULL)
 
-
-pdf("../output/figures/herb_temp.pdf")
-with(data, boxplot(tmin.025 ~ herb, horizontal=TRUE, names=c("Woody",'Herbaceous'), cex=.5, pch=20, xlab=expression(paste("Minimum temperature (",degree,")"))))
-model <- glm(herb ~ tmin.025 + I(log10(pmin.025+1)) + pseas.975 + tseas.975 + decimallatitude.025 + decimallatitude.025.sq + decimallatitude.975 + decimallatitude.975.sq, data=data, family=binomial, na.action="na.pass")
-pred <- with(data, predict(model, data.frame(
-                              tmin.025=seq(min(tmin.025),max(tmin.025),by=.01), pmin.025=mean(pmin.025), pseas.975=mean(pseas.975), tseas.975=mean(tseas.975), decimallatitude.025=mean(decimallatitude.025), decimallatitude.025.sq=mean(decimallatitude.025.sq), decimallatitude.975=mean(decimallatitude.975), decimallatitude.975.sq=mean(decimallatitude.975.sq))
-                   , type="response"))
-lines(pred+1 ~ seq(min(data$tmin.025), max(data$tmin.025), by=.01), lwd=3, col="red")
-dev.off()
+# ...variance partitioning (ish)...
+library(relaimpo)
+model <- glm(herb ~ tmin.025 + pmin.025 + pseas.975 + tseas.975 + decimallatitude.025 + I(decimallatitude.025^2) + decimallatitude.975 + I(decimallatitude.975^2), data=s.data, na.action="na.pass")
+calc.relimp(model)

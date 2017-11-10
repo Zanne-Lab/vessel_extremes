@@ -5,9 +5,11 @@
 library(MuMIn)
 library(relaimpo)
 
-# Load data
+# Load data (Remove non-angiosperms (using list from TPL))
 growth.form <- read.csv("../speciesTraitDataAEZ3.csv", as.is=TRUE)
 growth.form <- growth.form[growth.form$woodiness=="W",]
+$non.angio <- read.table("../datasets/non-angio-genera.txt", header=FALSE, as.is=TRUE)[,1]
+$growth.form <- growth.form[!growth.form$g %in% non.angio,]
 growth.form <- growth.form[,c("gs","phenology","vesselSize")]
 env <- read.csv("../datasets/species_summaries_all.csv", as.is=TRUE)
 data <- merge(growth.form, env, by.x="gs", by.y="X")
@@ -37,7 +39,7 @@ s.data$phenology <- data$phenology
 s.data$vesselSize <- data$vesselSize
 s.data$decimallatitude.975.sq <- s.data$decimallatitude.975^2
 s.data$decimallatitude.025.sq <- s.data$decimallatitude.025^2
-s.conduit.model <- lm(log(vesselSize) ~ tmin.025 + pmin.025 + pseas.975 + tseas.975 + phenology + decimallatitude.025 + decimallatitude.025.sq + decimallatitude.975 + decimallatitude.975.sq, data=s.data, na.action="na.pass")
+s.conduit.model <- lm(log(vesselSize) ~ phenology * (tmin.025 + pmin.025 + pseas.975 + tseas.975) + decimallatitude.025 + decimallatitude.025.sq + decimallatitude.975 + decimallatitude.975.sq, data=s.data, na.action="na.pass")
 s.conduit.model.set <- dredge(s.conduit.model, subset=dc(decimallatitude.975,decimallatitude.975.sq,decimallatitude.975) & dc(decimallatitude.025,decimallatitude.025.sq,decimallatitude.025))
 s.conduit.model.avg <- model.avg(s.conduit.model.set, subset=delta<4)
 summary(s.conduit.model.avg)
@@ -50,44 +52,39 @@ sink(NULL)
 
 pdf("../output/figures/figure_2_temp.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-with(data, plot(log(vesselSize) ~ tmin.025, data=data, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Minimum temperature (",degree,"C)")), ylab="Log Conduit Area", type="n"))
+with(data, plot(log(vesselSize) ~ tmin.025, data=data, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Minimum Temperature (",degree,"C)")), ylab=expression(paste("Log Conduit Area (", mm^2, ")")), type="n"))
 abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
 with(data, points(log(vesselSize) ~ tmin.025, data=data, pch=21, bg=ifelse(phenology, "black", "white")))
 dev.off()
-
 pdf("../output/figures/figure_2_precip.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-with(data, plot(log(vesselSize) ~ I(log(pmin.025+exp(1))), data=data, xlab="Log minimum precipitation (log[mm])", ylab="Log Conduit Area", type="n"))
+with(data, plot(log(vesselSize) ~ I(log(pmin.025+exp(1))), data=data, xlab="Log Minimum Precipitation (log[mm])", ylab=expression(paste("Log Conduit Area (", mm^2, ")")), type="n"))
 fg <- bg <- ifelse(data$tmin.025>0, "red", "blue")
 bg <- ifelse(data$phenology, bg, "white")
 abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
 with(data, points(log(vesselSize) ~ I(log(pmin.025+exp(1))), data=data, pch=21, col=fg, bg=bg))
 dev.off()
-
 pdf("../output/figures/figure_2_temp_seas.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-with(data, plot(log(vesselSize) ~ tseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab="Temperature seasonality", ylab="Log Conduit Area", type="n"))
+with(data, plot(log(vesselSize) ~ tseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab="Temperature Seasonality", ylab=expression(paste("Log Conduit Area (", mm^2, ")")), type="n"))
 abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
 with(data, points(log(vesselSize) ~ tseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white")))
 dev.off()
-
 pdf("../output/figures/figure_2_precip_seas.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-with(data, plot(log(vesselSize) ~ pseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab="Precipitation seasonality", ylab="Log Conduit Area", type="n"))
+with(data, plot(log(vesselSize) ~ pseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab="Precipitation Seasonality", ylab=expression(paste("Log Conduit Area (", mm^2, ")")), type="n"))
 abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
 with(data, points(log(vesselSize) ~ pseas.975, data=data, pch=21, bg=ifelse(phenology, "black", "white")))
 dev.off()
-
 pdf("../output/figures/figure_2_lat_lower.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-with(data, plot(log(vesselSize) ~ decimallatitude.025, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Minimum latitude (",degree,")")), ylab="Log Conduit Area", type="n", xlim=c(-60,0)))
+with(data, plot(log(vesselSize) ~ decimallatitude.025, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Minimum Latitude (",degree,")")), ylab=expression(paste("Log Conduit Area (", mm^2, ")")), type="n", xlim=c(-60,0)))
 abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
 with(data, points(log(vesselSize) ~ decimallatitude.025, data=data, pch=21, bg=ifelse(phenology, "black", "white")))
 dev.off()
-
 pdf("../output/figures/figure_2_lat_upper.pdf")
 par(mar=c(5.1,4.6,4.1,2.1), cex.lab=1.25, cex.axis=1.25, cex=1.25)
-with(data, plot(log(vesselSize) ~ decimallatitude.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Maximum latitude (",degree,")")), ylab="Log Conduit Area", type="n", xlim=c(0,70)))
+with(data, plot(log(vesselSize) ~ decimallatitude.975, data=data, pch=21, bg=ifelse(phenology, "black", "white"), xlab=expression(paste("Maximum Latitude (",degree,")")), ylab=expression(paste("Log Conduit Area (", mm^2, ")")), type="n", xlim=c(0,70)))
 abline(h=log(0.001520531), col="grey50", lwd=3, lty=2)
 with(data, points(log(vesselSize) ~ decimallatitude.975, data=data, pch=21, bg=ifelse(phenology, "black", "white")))
 dev.off()
@@ -106,3 +103,8 @@ test.model <- glm(phenology ~ pmin.025 + tseas.975, data=data)
 plt.mod(test.model)
 with(data, boxplot(tseas.975 ~ phenology))
 #...I think the seasonality effect passes the sense check - it looks like a real thing to me...
+
+# ...variance partitioning (ish)...
+library(relaimpo)
+model <- lm(log(vesselSize) ~ factor(phenology) + tmin.025 + pmin.025 + pseas.975 + tseas.975 + decimallatitude.025 + decimallatitude.025.sq + decimallatitude.975 + decimallatitude.975.sq, data=s.data, na.action="na.pass")
+calc.relimp(model)
