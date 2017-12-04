@@ -3,17 +3,19 @@ Call:
 model.avg(object = s.conduit.model.set, subset = delta < 4)
 
 Component model call: 
-lm(formula = log(vesselSize) ~ <6 unique rhs>, data = s.data, na.action 
+lm(formula = log(vesselSize) ~ <8 unique rhs>, data = s.data, na.action 
      = na.pass)
 
 Component models: 
-                              df  logLik    AICc delta weight
-1/2/3/4/5/6/7/8/10/11/12      13 -731.04 1488.81  0.00   0.34
-1/2/3/4/5/6/7/8/9/10/11/13    14 -730.25 1489.35  0.54   0.26
-1/2/3/4/5/6/7/8/9/10/11/12    14 -730.73 1490.31  1.51   0.16
-1/2/3/4/5/6/7/8/9/10/11/12/13 15 -730.16 1491.30  2.49   0.10
-1/2/3/4/5/7/8/11/12           11 -734.76 1492.04  3.24   0.07
-1/2/3/4/5/7/8/9/11/13         12 -733.74 1492.11  3.30   0.07
+          df  logLik    AICc delta weight
+1234578    9 -748.45 1515.26  0.00   0.28
+1234568    9 -748.78 1515.92  0.66   0.20
+12345789  10 -748.21 1516.87  1.61   0.12
+12345678  10 -748.23 1516.90  1.64   0.12
+123458     8 -750.45 1517.18  1.92   0.11
+12345689  10 -748.70 1517.85  2.58   0.08
+123456789 11 -748.03 1518.60  3.33   0.05
+1234589    9 -750.41 1519.18  3.92   0.04
 
 Term codes: 
    decimallatitude.025 decimallatitude.025.sq    decimallatitude.975 
@@ -22,61 +24,43 @@ decimallatitude.975.sq              phenology               pmin.025
                      4                      5                      6 
              pseas.975               tmin.025              tseas.975 
                      7                      8                      9 
-    phenology:pmin.025    phenology:pseas.975     phenology:tmin.025 
-                    10                     11                     12 
-   phenology:tseas.975 
-                    13 
 
 Model-averaged coefficients:  
 (full average) 
                        Estimate Std. Error Adjusted SE z value Pr(>|z|)    
-(Intercept)            -5.31930    0.12236     0.12265  43.371  < 2e-16 ***
-decimallatitude.025    -0.12384    0.06086     0.06100   2.030 0.042343 *  
-decimallatitude.025.sq -0.43171    0.09759     0.09782   4.413 1.02e-05 ***
-decimallatitude.975    -0.41511    0.10749     0.10773   3.853 0.000116 ***
-decimallatitude.975.sq -0.23443    0.07217     0.07234   3.241 0.001192 ** 
-phenology               0.62797    0.11212     0.11237   5.588  < 2e-16 ***
-pmin.025                0.00707    0.07368     0.07385   0.096 0.923732    
-pseas.975               0.24009    0.09093     0.09115   2.634 0.008435 ** 
-tmin.025                0.49143    0.16308     0.16336   3.008 0.002628 ** 
-phenology:pmin.025     -0.46670    0.27011     0.27046   1.726 0.084423 .  
-phenology:pseas.975    -0.50928    0.19574     0.19607   2.597 0.009392 ** 
-phenology:tmin.025     -0.25458    0.23267     0.23283   1.093 0.274202    
-tseas.975              -0.12112    0.16304     0.16325   0.742 0.458118    
-phenology:tseas.975     0.17459    0.23313     0.23326   0.748 0.454188    
+(Intercept)            -5.21741    0.12410     0.12437  41.949  < 2e-16 ***
+decimallatitude.025    -0.11510    0.06288     0.06302   1.826 0.067797 .  
+decimallatitude.025.sq -0.48434    0.09986     0.10009   4.839  1.3e-06 ***
+decimallatitude.975    -0.32272    0.10040     0.10064   3.207 0.001342 ** 
+decimallatitude.975.sq -0.21672    0.07122     0.07138   3.036 0.002395 ** 
+phenology               0.71070    0.10672     0.10698   6.643  < 2e-16 ***
+pseas.975               0.06638    0.07865     0.07874   0.843 0.399209    
+tmin.025                0.40573    0.12141     0.12168   3.334 0.000855 ***
+pmin.025               -0.03710    0.06249     0.06257   0.593 0.553245    
+tseas.975              -0.02385    0.09060     0.09078   0.263 0.792768    
  
 (conditional average) 
-                        Estimate Std. Error Adjusted SE z value Pr(>|z|)    
-(Intercept)            -5.319303   0.122356    0.122647  43.371  < 2e-16 ***
-decimallatitude.025    -0.123843   0.060856    0.061003   2.030 0.042343 *  
-decimallatitude.025.sq -0.431713   0.097585    0.097821   4.413 1.02e-05 ***
-decimallatitude.975    -0.415112   0.107490    0.107727   3.853 0.000116 ***
-decimallatitude.975.sq -0.234432   0.072174    0.072340   3.241 0.001192 ** 
-phenology               0.627968   0.112117    0.112373   5.588  < 2e-16 ***
-pmin.025                0.008165   0.079118    0.079310   0.103 0.918000    
-pseas.975               0.240090   0.090932    0.091145   2.634 0.008435 ** 
-tmin.025                0.491426   0.163084    0.163364   3.008 0.002628 ** 
-phenology:pmin.025     -0.538972   0.212847    0.213364   2.526 0.011535 *  
-phenology:pseas.975    -0.509280   0.195742    0.196070   2.597 0.009392 ** 
-phenology:tmin.025     -0.378820   0.183008    0.183305   2.067 0.038771 *  
-tseas.975              -0.205835   0.166542    0.166895   1.233 0.217455    
-phenology:tseas.975     0.408991   0.177359    0.177755   2.301 0.021399 *  
+                       Estimate Std. Error Adjusted SE z value Pr(>|z|)    
+(Intercept)            -5.21741    0.12410     0.12437  41.949  < 2e-16 ***
+decimallatitude.025    -0.11510    0.06288     0.06302   1.826 0.067797 .  
+decimallatitude.025.sq -0.48434    0.09986     0.10009   4.839  1.3e-06 ***
+decimallatitude.975    -0.32272    0.10040     0.10064   3.207 0.001342 ** 
+decimallatitude.975.sq -0.21672    0.07122     0.07138   3.036 0.002395 ** 
+phenology               0.71070    0.10672     0.10698   6.643  < 2e-16 ***
+pseas.975               0.11489    0.07165     0.07181   1.600 0.109614    
+tmin.025                0.40573    0.12141     0.12168   3.334 0.000855 ***
+pmin.025               -0.08218    0.07033     0.07048   1.166 0.243597    
+tseas.975              -0.08149    0.15281     0.15317   0.532 0.594694    
 ---
 Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
 
 Relative variable importance: 
                      decimallatitude.025 decimallatitude.025.sq
 Importance:          1.00                1.00                  
-N containing models:    6                   6                  
+N containing models:    8                   8                  
                      decimallatitude.975 decimallatitude.975.sq phenology
 Importance:          1.00                1.00                   1.00     
-N containing models:    6                   6                      6     
-                     pseas.975 tmin.025 phenology:pseas.975 pmin.025
-Importance:          1.00      1.00     1.00                0.87    
-N containing models:    6         6        6                   4    
-                     phenology:pmin.025 phenology:tmin.025 tseas.975
-Importance:          0.87               0.67               0.59     
-N containing models:    4                  4                  4     
-                     phenology:tseas.975
-Importance:          0.43               
-N containing models:    3               
+N containing models:    8                   8                      8     
+                     tmin.025 pseas.975 pmin.025 tseas.975
+Importance:          1.00     0.58      0.45     0.29     
+N containing models:    8        4         4        4     
