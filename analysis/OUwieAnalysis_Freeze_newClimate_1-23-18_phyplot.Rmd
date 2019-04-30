@@ -1,0 +1,648 @@
+---
+title: "Analyzing the evolution of plant vessel size in response to Freezing Temperatures"
+output: html_notebook
+---
+
+First load the required packages and datasets. 
+
+```{r}
+library(devtools)
+library(bayou)
+library(treeplyr)
+#library(pez)
+library(caper)
+library(dplyr)
+#install_github("richfitz/phyndr")
+#install_github("wcornwell/taxonlookup")
+library(phyndr)
+library(taxonlookup)
+library(diversitree)
+library(OUwie)
+library(foreach)
+library(doParallel)
+library(iterators)
+library(reshape2)
+
+setwd("~/repos/vessel_extremes/analysis/")
+```
+
+Match the resulting datasets and process them for analyses by setting up variables representing alternative hypotheses for the drivers of vessel size evolution. 
+
+```{r}
+## Read in trees, climate data, taxonomy and growth form data. 
+tree <- read.tree("../datasets/zanne1.1.tre")
+AEZ3 <- read.csv("../speciesTraitDataAEZ3.csv")
+#climate <- read.csv("../WoodyClimateHemi.12May.csv")
+species.summaries <- read.csv("../datasets/species_summaries_all.csv")
+plant_lookup <- plant_lookup()
+
+## Prepare names for matching
+AEZ3$species <- gsub(" ", "_", AEZ3$gs)
+#climate$species <- gsub(" ", "_", climate$species)
+#dat.old <- left_join(climate, AEZ3)
+#colnames(species.summaries)[1] <- "species"
+#rownames(dat.old) <- dat.old$species
+colnames(species.summaries)[1] <- "species"
+species.summaries$species <- gsub(" ", "_", species.summaries$species)
+dat.new <- left_join(species.summaries, AEZ3)
+rownames(dat.new) <- gsub(" ", "_", dat.new$species)
+
+tax <- lookup_table(unique(c(tree$tip.label, rownames(dat.new))), by_species = TRUE)
+tree.missing <- setdiff(tree$tip.label, rownames(tax))
+dat.missing <- setdiff(rownames(dat.new), rownames(tax))
+ptree <- drop.tip(tree, tree.missing)
+#pdat <- rownames(dat.new)[-match(dat.missing, dat.new$species)]
+nH <- nodeHeights(ptree)
+ptree$edge.length[ptree$edge[,2] <= length(ptree$tip.label)] <- 
+  ptree$edge.length[ptree$edge[,2] <= length(ptree$tip.label)] + (max(branching.times(ptree)) - nH[ptree$edge[,2] <= length(ptree$tip.label), 2])
+is.ultrametric(ptree)
+
+```
+
+```{r}
+tdOUwie <- make.treedata(ptree, dat.new) 
+tdOUwie
+```
+
+```{r}
+library(taxonlookup)
+get_mrca_fast <- function(phy, tip) {
+    if (!inherits(phy, "phylo")) {
+        stop('object "phy" is not of class "phylo"');
+    }
+    if (length(tip) < 2) {
+        return(NULL);
+    }
+    Ntip <- length(phy$tip.label);
+    rootnd <- Ntip + 1L;
+    
+    pars <- integer(phy$Nnode); # worst case assignment, usually far too long
+    tnd <- if (is.character(tip)) match(tip, phy$tip.label) else tip
+    
+    # keep track of traversed nodes
+    done_v <- logical(max(phy$edge));
+    
+    ## build a lookup table to get parents faster
+    pvec <- integer(Ntip + phy$Nnode);
+    pvec[phy$edge[,2]] <- phy$edge[,1];
+    
+    ## get entire lineage for first tip
+    nd <- tnd[1]
+    for (k in 1:phy$Nnode) {
+        nd <- pvec[nd];
+        pars[k] <- nd;
+        if (nd == rootnd) {
+            break;
+        }
+    }
+    pars <- pars[1:k]; # delete the rest
+    mrcind <- integer(max(pars));
+    mrcind[pars] <- 1:k;
+    mrcand <- pars[1]; # initialized MRCA node
+
+    ## traverse lineages for remaining tips, stop if hit common ancestor
+    for (i in 2:length(tnd)) {
+        cnd <- tnd[i];
+        done <- done_v[cnd];
+        while (!done) {
+            done_v[cnd] <- TRUE;
+            cpar <- pvec[cnd]; # get immediate parent
+            done <- done_v[cpar]; # early exit if TRUE (already traversed this node, tho not in pars)
+            if (cpar %in% pars) {
+                if (cpar == rootnd) {
+                    return(rootnd); # early exit (can't get shallower that the root)
+                }
+                if (mrcind[cpar] > mrcind[mrcand]) {
+                    mrcand <- cpar;
+                }
+                done_v[cpar] <- TRUE;
+                done <- TRUE;
+            }
+            cnd <- cpar; # keep going!
+        }
+    }
+    return(mrcand);
+}
+pdf("../doc/FreezingOrigin025.pdf", height=12, width=12)
+tdFreeze <- mutate(tdOUwie, Freeze = tmin.025 < 0) %>% filter(., !is.na(tmin.025))
+#tdFreeze <- filter(tdFreeze, woodiness=="W")
+tax <- taxonlookup::lookup_table(tdFreeze$phy$tip.label)
+gen <- sapply(strsplit(tdFreeze$phy$tip.label, split="_"), function(x) x[1])
+tax <- tax[match(gen, tax$genus), ]
+rownames(tax) <- NULL
+
+superrosids <- c("Saxifragales", "Malvales")
+magnoliidae <- c("Annonaceae", "Aristolochiaceae","Nymphaeaceae", "Ranunculaceae", "Papaveraceae", "Piperaceae", "Nelumbonaceae", "Fumariaceae")
+monocots <- c("Acorales", "Alismatales", "Petrosaviales", "Poales", "Dioscoreales", "Pandanales", "Liliales", "Asparagales")
+superasterids <- c("Santalales", "Caryophyllales","Cornales", "Ericales", "Asterales", "Lamiales")
+
+superrosid.node <- get_mrca_fast(tdFreeze$phy, tdFreeze$phy$tip.label[which(tax$order %in% superrosids)])
+magnoliidae.node <- get_mrca_fast(tdFreeze$phy, tdFreeze$phy$tip.label[which(tax$family %in% magnoliidae)])
+monocot.node <- get_mrca_fast(tdFreeze$phy, tdFreeze$phy$tip.label[which(tax$order %in% monocots)])
+superasterid.node <- get_mrca_fast(tdFreeze$phy, tdFreeze$phy$tip.label[which(tax$order %in% superasterids)])
+
+#plot(tdFreeze$phy, show.tip.label=FALSE, edge.color ="black", lwd=2, type="fan")
+#lastPP<-get("last_plot.phylo",envir=.PlotPhyloEnv)
+
+freezeCols <- c(bayou::makeTransparent("black", 0), bayou::makeTransparent("#3498db", 255))
+#asr <- phytools::fastAnc(multi2di(tdFreeze$phy), tdFreeze[['tmin.025']]/10)
+par(mar=c(0,0,0,0))
+plot(tdFreeze$phy, show.tip.label=FALSE, edge.color ="black", lwd=2, type="fan")
+par(new=TRUE)
+plot(tdFreeze$phy, show.tip.label=FALSE, edge.color =freezeCols[as.numeric(asr[as.character(tdFreeze$phy$edge[,1])]<0)+1], lwd=2, type="fan")
+arc.cladelabels(text="Superrosidae", node=superrosid.node, mark.node=FALSE, cex=1.5)
+arc.cladelabels(text="Magnoliidae", node=magnoliidae.node, mark.node=FALSE)
+arc.cladelabels(text="Monocotyledoneae", node=monocot.node, mark.node=FALSE, cex=1.5)
+arc.cladelabels(text="Superasterids", node=superasterid.node, mark.node=FALSE, cex=1.5)
+
+#tiplabels(pch=22, bg=freezeCols[as.numeric(tdFreeze[['Freeze']])+1], col=freezeCols[as.numeric(tdFreeze[['Freeze']])+1], cex=0.25)
+#nodelabels(, pch=21, bg=freezeCols[as.numeric(asr<0)+1], col=freezeCols[as.numeric(asr<0)+1], cex=0.25)
+dev.off()
+```
+
+
+```{r}
+tdOUwie <- make.treedata(ptree, dat.new) 
+tdOUwie <- filter(tdOUwie, !is.na(vesselSize), !is.na(phenology),!is.na(tmin.01))
+tdOUwie <- dplyr::select(tdOUwie, vesselSize, phenology, starts_with("tmin"))
+tdOUwie <- mutate(tdOUwie, OU2freeze.01 = c("NF", "F")[as.numeric(tmin.01 < 0)+1],
+                            OU2freeze.025 = c("NF", "F")[as.numeric(tmin.025 < 0)+1],
+                              OU2freeze.05 = c("NF", "F")[as.numeric(tmin.05 < 0)+1],
+                                OU2freeze.50 = c("NF", "F")[as.numeric(tmin.50 < 0)+1],
+                                  OU2freeze.95 = c("NF", "F")[as.numeric(tmin.95 < 0)+1], 
+                                    OU2freeze.975 = c("NF", "F")[as.numeric(tmin.975 < 0)+1], 
+                                      OU2freeze.99 = c("NF", "F")[as.numeric(tmin.99 < 0)+1]
+                                        )
+tdOUwie <- filter(tdOUwie, phenology != "D_EV")
+                                        #,
+                                        #OU2freeze.mean = c("NF", "F")[as.numeric(tmin.mean < 0)+1], 
+                                          #OU2freeze.lower = c("NF", "F")[as.numeric(tmin.lower < 0)+1],
+                                            #OU2freeze.upper = c("NF", "F")[as.numeric(tmin.upper < 0)+1])
+
+pasteNA <- function(x, y, sep=" ", collapse=NULL){
+  ifelse(is.na(y), NA, paste(x,y, sep=sep, collapse=collapse))
+}
+
+tdOUwie <- mutate(tdOUwie, OU1="global", OU2phenology=phenology, lnVs=log(vesselSize))
+tdOUwie <- mutate(tdOUwie, OU4freeze.01= paste(phenology, OU2freeze.01, sep="_"), 
+                            OU4freeze.025= paste(phenology, OU2freeze.025, sep="_"),
+                              OU4freeze.05= paste(phenology, OU2freeze.05, sep="_"),
+                                OU4freeze.50= paste(phenology, OU2freeze.50, sep="_"),
+                                  OU4freeze.95= paste(phenology, OU2freeze.95, sep="_"),
+                                    OU4freeze.975= paste(phenology, OU2freeze.975, sep="_"),
+                                      OU4freeze.99= paste(phenology, OU2freeze.99, sep="_")
+                                        )#,
+                                        #OU4freeze.mean= paste(phenology, OU2freeze.mean, sep="_"), 
+                                          #OU4freeze.lower = pasteNA(phenology, OU2freeze.lower, sep="_"),
+                                           #OU4freeze.upper = pasteNA(phenology, OU2freeze.upper, sep="_")
+                  
+tdOUwie <- treeply(tdOUwie, reorder, "postorder")
+tdOUwieFreeze <- dplyr::select(tdOUwie, lnVs, OU1, starts_with("OU"))
+par(mfrow=c(5,4), mar=c(2, 2, 0.1, 0.1))
+dum <- lapply(2:16, function(x) boxplot(tdOUwieFreeze[['lnVs']] ~ tdOUwieFreeze[[x]]))
+
+#
+
+```
+
+
+Scale tree to unit height:
+
+```{r}
+tdOUwieFreeze$phy$edge.length <- tdOUwieFreeze$phy$edge.length/max(branching.times(tdOUwieFreeze$phy))
+#tree <- tdOUwieFreeze$phy
+#tree$edge.length <- tree$edge.length/max(branching.times(tree))
+#dat <- tdOUwieFreeze$dat
+#saveRDS(tdOUwie, "../output/cleandata/tdOUwie_newClimate_6-5-17.rds")
+```
+
+
+```{r}
+require(foreach)
+require(doParallel)
+#registerDoParallel(cores=80)
+
+#itd <- iter(tdOUwieFreeze$dat[,3:ncol(tdOUwieFreeze$dat)], by="column")
+#smtds <- foreach(i=itd) %do% {
+#  idat <- data.frame(tdOUwieFreeze$phy$tip.label, "lnVs"=tdOUwieFreeze$dat$lnVs,i)
+#  itdx <- make.treedata(tdOUwieFreeze$phy, idat) 
+# itdx <- filter(itdx, !is.na(itdx$dat[[2]]))
+#}
+#smtrees.ARDmcmc <- foreach(i=itd) %dopar% {
+#  idat <- cbind(tdOUwieFreeze$phy$tip.label, i)
+#  itdx <- make.treedata(tdOUwieFreeze$phy, idat) 
+#  itdx <- filter(itdx, !is.na(itdx$dat[[1]]))
+#  make.simmap(itdx$phy, itdx[[1]], model="ARD", nsim=20)
+#}
+
+#saveRDS(smtrees.ER, file="../output/smtrees_ER.rds")
+#smtrees.ER <- readRDS("../output/smtrees_ER.rds")
+
+aic <- readRDS("../output/OUwie/ARDERquantileAICs.rds")
+useER <- which(aic[,2] - aic[,1] < 4)
+useARD <- which(aic[,2]-aic[,1] >= 4)
+smtrees.ARD <- readRDS("../output/OUwie/smtrees.ARDmcmc.rds")
+smtrees.ER <- readRDS("../output/OUwie/smtrees.ERmcmc.rds")
+smtrees <- c(smtrees.ER[useER], smtrees.ARD[useARD])
+
+```
+
+
+```{r}
+tree <- tdOUwieFreeze$phy
+dat <- tdOUwieFreeze$dat
+
+registerDoParallel(cores = 60)
+
+ouwie.dat <- data.frame('Genus_species' = tree$tip.label, 'Reg' = dat[[2]], 'X' = dat$lnVs, "MEerr" = 0.02)
+#BM.fit <- OUwie(tree, ouwie.dat, model="BM1", mserr="known")
+#OU1.fit <- OUwie(tree, ouwie.dat, model="OU1", mserr="known")
+#saveRDS(BM.fit, "../output/OUwie/BMfit_newClim.rds")
+#saveRDS(OU1.fit, "../output/OUwie/OUfit_newClim.rds")
+BM.fit <- readRDS("../output/OUwie/BMfit_newClim.rds")
+OU1.fit <- readRDS("../output/OUwie/OUfit_newClim.rds")
+
+classPhylo <- function(tree){
+  class(tree) <- "phylo"
+  tree
+}
+
+#stree.dat <- lapply(3:ncol(tdOUwieFreeze$dat), function(i) make.treedata((idat = tdOUwieFreeze$dat[[i]], itree = smtrees.ER[[i-2]])))
+ouwie.dats <- lapply(3:ncol(tdOUwieFreeze$dat), function(i) data.frame('Genus_species'=tdOUwieFreeze$phy$tip.label, "Reg"=tdOUwieFreeze[[i]], "X"=tdOUwieFreeze[['lnVs']], "MEerr"=0.02))
+ouwie.tds <- lapply(1:length(ouwie.dats), function(i) lapply(smtrees[[i]], function(tr)  make.treedata(classPhylo(tr), ouwie.dats[[i]]) %>% filter(., !is.na(Reg)) ))
+itd <- iter(ouwie.tds[1:15])
+
+#  idat <- cbind(tdOUwieFreeze$phy$tip.label, i)
+#  itdx <- make.treedata(tdOUwieFreeze$phy, idat) 
+#  itdx <- filter(itdx, !is.na(itdx$dat[[1]]))
+
+itd <- iter(ouwie.tds[1:15])
+OUM.fits <- foreach(x=itd) %dopar% {
+  lapply(x, function(tdx) OUwie(tdx$phy, as.data.frame(tdx$dat), model="OUM", mserr="known", simmap.tree = TRUE))
+}
+saveRDS(OUM.fits, file="../output/OUwie/OUMfits_newClimate_ardmcmc.rds")
+
+itd <- iter(ouwie.tds[1:15])
+OUMA.fits <- foreach(x=itd) %dopar% {
+  lapply(x, function(tdx) OUwie(tdx$phy, as.data.frame(tdx$dat), model="OUMA", mserr="known", simmap.tree = TRUE))
+}
+saveRDS(OUMA.fits, file="../output/OUwie/OUMAfits_newClimate_ardmcmc.rds")
+
+itd <- iter(ouwie.tds[1:15])
+OUMV.fits <- foreach(x=itd) %dopar% {
+  lapply(x, function(tdx) OUwie(tdx$phy, as.data.frame(tdx$dat), model="OUMV", mserr="known", simmap.tree = TRUE))
+}
+saveRDS(OUMV.fits, file="../output/OUwie/OUMVfits_newClimate_ardmcmc.rds")
+
+itd <- iter(ouwie.tds[1:15])
+BMS.fits <- foreach(x=itd) %dopar% {
+  lapply(x, function(tdx) OUwie(tdx$phy, as.data.frame(tdx$dat), model="BMS", mserr="known", simmap.tree = TRUE))
+}
+saveRDS(BMS.fits, file="../output/OUwie/BMSfits_newClimate_ardmcmc.rds")
+
+## Added upper/lower so rerunning with just those:
+
+#itd <- iter(ouwie.tds[20:21])
+#OUM.fits2 <- foreach(x=itd) %dopar% {
+#  lapply(x, function(tdx) OUwie(tdx$phy, as.data.frame(tdx$dat), model="OUM", mserr="known", simmap.tree = TRUE))
+#}
+#saveRDS(OUM.fits2, file="../output/OUwie/OUMfits2.rds")#
+
+#itd <- iter(ouwie.tds[20:21])
+#OUMA.fits2 <- foreach(x=itd) %dopar% {
+#  lapply(x, function(tdx) OUwie(tdx$phy, as.data.frame(tdx$dat), model="OUMA", mserr="known", simmap.tree = TRUE))
+#}
+#saveRDS(OUMA.fits2, file="../output/OUwie/OUMAfits2.rds")
+
+#itd <- iter(ouwie.tds[20:21])
+#OUMV.fits2 <- foreach(x=itd) %dopar% {
+#  lapply(x, function(tdx) OUwie(tdx$phy, as.data.frame(tdx$dat), model="OUMV", mserr="known", simmap.tree = TRUE))
+#}
+#saveRDS(OUMV.fits2, file="../output/OUwie/OUMVfits2.rds")#
+
+#itd <- iter(ouwie.tds[20:21])
+#BMS.fits2 <- foreach(x=itd) %dopar% {
+#  lapply(x, function(tdx) OUwie(tdx$phy, as.data.frame(tdx$dat), model="BMS", mserr="known", simmap.tree = TRUE))
+#}
+#saveRDS(BMS.fits2, file="../output/OUwie/BMSfits2.rds")
+
+```
+
+
+```{r}
+BM.fit <- readRDS("../output/OUwie/BMfit_newClim.rds")
+OU1.fit <- readRDS("../output/OUwie/OUfit_newClim.rds")
+OUM.fits <- readRDS("../output/OUwie/OUMfits_newClimate_ardmcmc2.rds")
+OUMA.fits <- readRDS("../output/OUwie/OUMAfits_newClimate_ardmcmc2.rds")
+OUMV.fits <- readRDS("../output/OUwie/OUMVfits_newClimate_ardmcmc2.rds")
+#OUMV.fits <- readRDS("../output/OUwie/cleanOUMVfits.rds")
+BMS.fits <- readRDS("../output/OUwie/BMSfits_newClimate_ardmcmc2.rds")
+
+## This will be combined later, but since we ran in parts:
+#OUM.fits2 <- readRDS("../output/OUwie/OUMfits2.rds")
+#OUMA.fits2 <- readRDS("../output/OUwie/OUMAfits2.rds")
+#OUMV.fits2 <- readRDS("../output/OUwie/OUMVfits2.rds")
+#BMS.fits2 <- readRDS("../output/OUwie/BMSfits2.rds")
+
+
+```
+
+Some functions to handle the lists of lists of results.
+
+```{r}
+reshapeFx <- function(i, fits) do.call(rbind, lapply(1:length(fits[[i]]), function(x) cbind("replicate"=x, melt(rbind(fits[[i]][[x]]$solution, fits[[i]][[x]]$solution[2,]/(2*fits[[i]][[x]]$solution[1,])) ))))
+aicFx <- function(i, fits) do.call(rbind, lapply(1:length(fits[[i]]), function(x) cbind("replicate"=x, "aic"=fits[[i]][[x]]$AICc)))
+reshapeBMFx <- function(i, fits) do.call(rbind, lapply(1:length(fits[[i]]), function(x) cbind("replicate"=x, melt(rbind(fits[[i]][[x]]$solution)))))
+
+getOUSummaryFits <- function(fits){
+  AICcs <- do.call(rbind, lapply(1:length(fits), function(x) data.frame("data"=colnames(dat)[x+2], aicFx(x, fits))))
+  solutions <- do.call(rbind, lapply(1:length(fits), function(x) cbind("data"=colnames(dat)[x+2], reshapeFx(x, fits))))
+  solutions$Var1 <- as.character(solutions$Var1)
+  return(list(AICc = AICcs, solutions=solutions))
+}
+getBMSummaryFits <- function(fits){
+  AICcs <- do.call(rbind, lapply(1:length(fits), function(x) data.frame("data"=colnames(dat)[x+2], aicFx(x, fits))))
+  solutions <- do.call(rbind, lapply(1:length(fits), function(x) cbind("data"=colnames(dat)[x+2], reshapeBMFx(x, fits))))
+  solutions$Var1 <- as.character(solutions$Var1)
+  solutions$Var1[solutions$Var1==""] <- "Vy"
+  return(list(AICc = AICcs, solutions=solutions))
+}
+
+```
+
+
+```{r}
+dat <- tdOUwieFreeze$dat
+#dat <- dat[,which(!colnames(dat) %in% c("OU2freeze.lower", "OU2freeze.upper", "OU4freeze.lower", "OU4freeze.upper"))]
+
+OU1.summary <- getOUSummaryFits(list(list(OU1.fit)))
+BM.summary <- getBMSummaryFits(list(list(BM.fit)))
+OUMV.summary <- getOUSummaryFits(OUMV.fits)
+OUM.summary <- getOUSummaryFits(OUM.fits)
+OUMA.summary <- getOUSummaryFits(OUMA.fits)
+BMS.summary <- getBMSummaryFits(BMS.fits)
+OUMA.summary$AICc$aic[OUMA.summary$AICc$aic < 500] <- NA
+
+OU1.summary
+BM.summary
+OUMV.summary
+OUM.summary
+OUMA.summary
+BMS.summary
+
+```
+
+Extract theta values
+```{r}
+OUM.theta <- lapply(1:length(OUM.fits), function(x) do.call(rbind, lapply(1:length(OUM.fits[[x]]), function(y) {z <- OUM.fits[[x]][[y]]$theta; rownames(z) <- paste(rep(x, nrow(z)),y, sep=".");z <- as.data.frame(z);z <- cbind("reg"=as.character(OUM.fits[[x]][[y]]$tot.states), z); z})))
+
+OUMV.theta <- lapply(1:length(OUMV.fits), function(x) do.call(rbind, lapply(1:length(OUMV.fits[[x]]), function(y) {z <- OUMV.fits[[x]][[y]]$theta; rownames(z) <- paste(rep(x, nrow(z)),y, sep=".");z <- as.data.frame(z);z <- cbind("reg"=as.character(OUMV.fits[[x]][[y]]$tot.states), z); z})))
+
+OUMA.theta <- lapply(1:length(OUMA.fits), function(x) do.call(rbind, lapply(1:length(OUMA.fits[[x]]), function(y) {z <- OUMA.fits[[x]][[y]]$theta; rownames(z) <- paste(rep(x, nrow(z)),y, sep=".");z <- as.data.frame(z);z <- cbind("reg"=as.character(OUMA.fits[[x]][[y]]$tot.states), z); z})))
+
+```
+
+```{r}
+#Compile all AICcs
+AICcs <- data.frame(Model=c("BM1","OU1"), data=rep(NA,2), replicate=sort(rep(1:20,2)), aic=c(BM.fit$AICc, OU1.fit$AICc))
+tmp <- do.call(rbind, list(cbind(Model="OUM", OUM.summary$AICc),
+                    cbind(Model="OUMV", OUMV.summary$AICc),
+                    cbind(Model="OUMA", OUMA.summary$AICc),
+                    cbind(Model="BMS", BMS.summary$AICc)))
+AICcs <- as.data.frame(rbind(AICcs, tmp))
+AICcs$aic[AICcs$aic<1200] <- NA
+
+AICcs <- do.call(rbind, lapply(1:20, function(x){
+  filter(AICcs, replicate==x) %>% mutate(., "dAIC" = aic-min(aic, na.rm=TRUE))
+}))
+
+sumAIC <- group_by(AICcs, data, Model) %>% summarize(., median.dAIC = round(median(dAIC, na.rm=TRUE),2), best.Model = sum(dAIC[!is.na(dAIC)]<2),count=length(dAIC[!is.na(dAIC)]<2), min.dAIC=round(min(dAIC, na.rm=TRUE),2), max.dAIC=round(max(dAIC, na.rm=TRUE),2), sd.dAIC=sd(dAIC, na.rm=TRUE)) %>% arrange(., (median.dAIC))
+sumAIC
+AICcs.noOUMA <- filter(AICcs, Model!="OUMA")
+tmp <- cbind(round(tapply(aicw(AICcs.noOUMA$aic)$w, paste(AICcs.noOUMA$Model, AICcs.noOUMA$data, sep=""), sum, na.rm=TRUE), 2))
+tmp
+tmp2 <- filter(AICcs, Model %in% c("OUMV", "OUM"))
+boxplot(tmp2$aic~paste(tmp2$Model, tmp2$data))
+
+
+```
+
+
+
+```{r}
+par(mar=c(10, 2, 4,0), mfrow=c(1,4))
+
+
+boxplot(OUM.summary$AICc$aic~OUM.summary$AICc$data, las=2, ylim=c(1100, 1700), main="OUM")
+abline(h=OU1.fit$AICc, col="red", lty=2, lwd=2)
+abline(h=seq(1000, 2000, 50), lty=2)
+boxplot(OUMV.summary$AICc$aic~OUMV.summary$AICc$data, las=2, ylim=c(1100, 1700), col=bayou:::makeTransparent("red", alpha=50), main="OUMV")
+abline(h=seq(1000, 2000, 50), lty=2)
+boxplot(OUMA.summary$AICc$aic~OUMA.summary$AICc$data, las=2, ylim=c(1100, 1700), col=bayou:::makeTransparent("green", alpha=50), main="OUMA")
+abline(h=seq(1000, 2000, 50), lty=2)
+boxplot(BMS.summary$AICc$aic~BMS.summary$AICc$data, las=2, ylim=c(1100, 1700), col=bayou:::makeTransparent("blue", alpha=50), main="BMS")
+abline(h=seq(1000, 2000, 50), lty=2)
+abline(h=BM.fit$AICc, col="red", lty=2, lwd=2)
+
+par(mfrow=c(1,1), mar=c(5,4,4,2))
+boxplot(OUM.theta[[10]]$V1~OUM.theta[[10]]$reg, main="OUM4freeze.01", ylab="theta")
+boxplot(OUM.theta[[11]]$V1~OUM.theta[[11]]$reg, main="OUM4freeze.025", ylab="theta")
+
+
+```
+
+```{r}
+tmp <- OUM.summary$AICc
+tmp <- filter(tmp, !is.na(data)) %>% group_by(., replicate) %>% mutate(., dAICc = aic-min(aic)) %>% group_by(., data) 
+par(mar=c(6, 5, 1,2), mfrow=c(1,1))#, bg="black", col="white", col.lab="white", col.axis="white", fg="white")
+tmp$data <-factor(tmp$data, c("OU2phenology","OU2freeze.99" ,"OU2freeze.975", "OU2freeze.95", "OU2freeze.50","OU2freeze.mean",
+       "OU2freeze.05","OU2freeze.025", "OU2freeze.01", 
+       "OU4freeze.99", "OU4freeze.975", "OU4freeze.95", "OU4freeze.50","OU4freeze.mean",
+       "OU4freeze.05","OU4freeze.025", "OU4freeze.01"))
+pal <- viridis::viridis
+cols <- c("white", pal(8), pal(8))
+
+boxplot(tmp$dAICc~tmp$data, las=2, col=cols, border=cols, pch="." )
+
+```
+```{r}
+ps.options(height=6, width=6, horizontal=FALSE, onefile=FALSE, paper="special")
+postscript("../output/OUwieAICFigure_revision.eps")
+#pdf("../output/OUwieAICFigure_revision.pdf", height=6, width=6)
+tmp <- OUM.summary$AICc
+tmp <- filter(tmp, !is.na(data)) %>% group_by(., replicate) %>% mutate(., dAICc = aic-min(aic)) %>% group_by(., data) 
+tmp$data <-factor(tmp$data, c("OU2phenology","OU2freeze.99" ,"OU2freeze.975", "OU2freeze.95", "OU2freeze.50","OU2freeze.mean",
+       "OU2freeze.05","OU2freeze.025", "OU2freeze.01", 
+       "OU4freeze.99", "OU4freeze.975", "OU4freeze.95", "OU4freeze.50","OU4freeze.mean",
+       "OU4freeze.05","OU4freeze.025", "OU4freeze.01"))
+pal <- viridis::viridis
+cols <- c(rep("gray50", 9), rep("gray90",8))
+
+par(mar=c(10, 5, 1,2), mfrow=c(1,1), cex.lab=1.5)#, bg="black", col="white", col.lab="white", col.axis="white", fg="white")
+boxplot(tmp$dAICc~tmp$data, las=2, col=cols, border="black", pch="." , xaxt="n", ylab="dAICc")
+labnames <- c("Phenology", "Freeze.99", "Freeze.975", "Freeze.95", "Freeze.50", "Freeze.mean",
+              "Freeze.05", "Freeze.025", "Freeze.01",
+              "Freeze.99 x Phenology", "Freeze.975 x Phenology", "Freeze.95 x Phenology", 
+              "Freeze.50 x Phenology", 
+              "Freeze.mean x Phenology", "Freeze.05 x Phenology",
+              "Freeze.025 x Phenology", "Freeze.01 x Phenology"
+              )
+axis(1, at=1:17, labels=rep("", 17))
+text(x =  seq_along(labnames), y = par("usr")[3] - 10, srt = 45, adj = 1,
+     labels = labnames, xpd = TRUE)
+dev.off()
+```
+
+
+```{r}
+simmap2bayou <- function(stree, ...){
+    stree <- reorderSimmap(stree, "postorder")
+    shifts <- sapply(stree$maps, function(x) names(x)[-1])
+    sb <- unlist(sapply(1:length(shifts), function(x) rep(x, length(shifts[[x]]))))
+    t2 <- as.numeric(unlist(sapply(stree$maps, function(x) names(x)[-1])))
+    loc <- unlist(sapply(stree$maps, function(x) cumsum(x)[-1]))
+    return(list(k=length(sb), ntheta=max(t2), sb=sb, t2=t2, loc=loc))
+}
+
+#pdf("../output/OUMmodelfits.pdf", height=5, width=8)
+#png("../output/OUMmodelfits.png", height=500, width=800)
+par(mfrow=c(1,2), mar=c(5, 4, 4, 0))#, bg="black", col="white", col.lab="white", col.axis="white")
+pal <- setNames(c(rgb(185,30,30, maxColorValue=255), 
+                  rgb(230, 159, 0, maxColorValue=255), 
+                  rgb(86, 180, 233, maxColorValue=255), 
+                  rgb(0,158,115, maxColorValue=255)), c("D_F", "D_NF", "EV_F", "EV_NF"))
+palT <- sapply(pal, function(x) makeTransparent(x, alpha=100))
+#plotSimmap(smtrees.ER[[12]][[1]], ftype="off", colors=makeTransparent(pal,100))
+#dum <- lapply(2:10, function(x) plotSimmap(smtrees.ER[[x]], fsize=0.25, colors=makeTransparent(pal,100), add=TRUE, ftype="off"))
+
+regimes <- "OU4freeze.025"
+ind <- which(colnames(tdOUwieFreeze$dat)==regimes)
+
+tmp <- filter(OUM.summary$solutions, data==regimes, Var2=="D_F", Var1!="")
+pars.list <- lapply(min(tmp$replicate):max(tmp$replicate), function(i) list(alpha=tmp[tmp$replicate==i & tmp$Var1=="alpha", "value"], sig2=tmp[tmp$replicate==i & tmp$Var1=="sigma.sq", "value"]))
+for(i in 1:length(pars.list)){
+  spars <- simmap2bayou(reorderSimmap(smtrees[[ind-2]][[i]], "postorder"), levels=c("D_F", "D_NF", "EV_F", "EV_NF"))
+  pars.list[[i]]$sb <- spars$sb
+  pars.list[[i]]$t2 <- spars$t2
+  pars.list[[i]]$loc <- unname(spars$loc)-0.0001
+  pars.list[[i]]$k <- length(spars$sb)
+  pars.list[[i]]$ntheta <- 4
+  pars.list[[i]]$theta <- OUM.theta[[ind-2]][(i-1)*4+1:4, 'V1']
+}
+
+
+phenogram(smtrees[[ind-2]][[1]], tdOUwieFreeze[['lnVs']], ftype="off", colors=makeTransparent(pal,50), ylim=c(-11, -2), ylab="Log Conduit Diameter", xlab="Relative Time", lwd=0.75)
+dum <- lapply(2:10, function(x) phenogram(smtrees[[ind-2]][[x]], tdOUwieFreeze[['lnVs']], ftype="off", colors=makeTransparent(pal,50), add=TRUE, lwd=0.75))
+legend(0, -2, col = pal, lwd=2, legend=c("Deciduous/Freezing", "Deciduous/Non-freezing", "Evergreen/Freezing", "Evergreen/Non-freezing"), cex=0.7, box.col = "white", text.col="black")
+
+OUM.Vys <- filter(OUM.summary$solutions, data==regimes, Var1=="")
+OUMV.Vys <- filter(OUMV.summary$solutions, data==regimes, Var1=="")
+
+par(mar=c(5,0,4,10))
+plot(c(0,1.25), c(-11, -2), type="n", xlab="", ylab="", xaxt="n", yaxt="n", bty="n")
+
+y <- seq(-20, 10, 0.05)
+
+for(i in 1:nrow(OUM.Vys)){
+  lines(dnorm(y, mean=OUM.theta[[ind-2]][i,2], sd=sqrt(OUM.Vys$value[i])) , y, col=palT[OUM.theta[[ind-2]][i,1]])
+  lines(c(0, dnorm(OUM.theta[[ind-2]][i,2], mean=OUM.theta[[ind-2]][i,2], sd=sqrt(OUM.Vys$value[i]))) ,c(OUM.theta[[ind-2]][i,2],OUM.theta[[ind-2]][i,2]) , col=palT[OUM.theta[[ind-2]][i,1]], lwd=1, lty=2)
+}
+
+xadj <- max(dnorm(OUM.theta[[ind-2]][,2], mean=OUM.theta[[ind-2]][,2], sd= sqrt(OUM.Vys$value)))
+xadj <- xadj*1.25
+#text(c(0.18, 0.25+xadj), c(-2, -2), labels=c("OUM", "OUMV"), cex=0.9)
+
+for(i in 1:nrow(OUMV.Vys)){
+  lines(dnorm(y, mean=OUMV.theta[[ind-2]][i,2], sd=sqrt(OUMV.Vys$value[i])) + xadj, y, col=palT[OUMV.theta[[ind-2]][i,1]])
+  lines(c(xadj, xadj+ dnorm(OUMV.theta[[ind-2]][i,2], mean=OUMV.theta[[ind-2]][i,2], sd=sqrt(OUMV.Vys$value[i]))) ,c(OUMV.theta[[ind-2]][i,2],OUMV.theta[[ind-2]][i,2]) , col=palT[OUMV.theta[[ind-2]][i,1]], lwd=1, lty=2)
+}
+
+for(i in names(pal)){
+  y <- dat$lnVs[dat[[regimes]]==i]
+  points(rep(xadj + 0.8, length(y))-0.06*which(c("D_F", "D_NF", "EV_F", "EV_NF")==i), y, pch="-", col=pal[i], cex=1.25)
+}
+
+
+#dev.off()
+```
+```{r}
+cairo_ps("../output/OUwiemodelfits_revision.eps", onefile=FALSE, height=5, width=8, fallback_resolution = 600)
+#pdf("../output/OUMmodelfits_revision.pdf", height=5, width=8)
+#png("../output/OUMmodelfits.png", height=500, width=800)
+par(mfrow=c(1,2), mar=c(5, 5, 4, 0))#, bg="black", col="white", col.lab="white", col.axis="white")
+pal <- setNames(c(rgb(185,30,30, maxColorValue=255), 
+                  rgb(230, 159, 0, maxColorValue=255), 
+                  rgb(86, 180, 233, maxColorValue=255), 
+                  rgb(0,158,115, maxColorValue=255)), c("D_F", "D_NF", "EV_F", "EV_NF"))
+palT <- sapply(pal, function(x) makeTransparent(x, alpha=100))
+#plotSimmap(smtrees.ER[[12]][[1]], ftype="off", colors=makeTransparent(pal,100))
+#dum <- lapply(2:10, function(x) plotSimmap(smtrees.ER[[x]], fsize=0.25, colors=makeTransparent(pal,100), add=TRUE, ftype="off"))
+
+regimes <- "OU4freeze.025"
+ind <- which(colnames(tdOUwieFreeze$dat)==regimes)
+
+tmp <- filter(OUM.summary$solutions, data==regimes, Var2=="D_F", Var1!="")
+pars.list <- lapply(min(tmp$replicate):max(tmp$replicate), function(i) list(alpha=tmp[tmp$replicate==i & tmp$Var1=="alpha", "value"], sig2=tmp[tmp$replicate==i & tmp$Var1=="sigma.sq", "value"]))
+for(i in 1:length(pars.list)){
+  spars <- simmap2bayou(reorderSimmap(smtrees[[ind-2]][[i]], "postorder"), levels=c("D_F", "D_NF", "EV_F", "EV_NF"))
+  pars.list[[i]]$sb <- spars$sb
+  pars.list[[i]]$t2 <- spars$t2
+  pars.list[[i]]$loc <- unname(spars$loc)-0.0001
+  pars.list[[i]]$k <- length(spars$sb)
+  pars.list[[i]]$ntheta <- 4
+  pars.list[[i]]$theta <- OUM.theta[[ind-2]][(i-1)*4+1:4, 'V1']
+}
+
+
+phenogram(smtrees[[ind-2]][[1]], tdOUwieFreeze[['lnVs']], ftype="off", colors=makeTransparent(pal,20), ylim=c(-11, -2), ylab=expression('Log Conduit Area (mm'^2*')'), xlab="Relative Time", lwd=0.75)
+dum <- lapply(2:20, function(x) phenogram(smtrees[[ind-2]][[x]], tdOUwieFreeze[['lnVs']], ftype="off", colors=makeTransparent(pal,20), add=TRUE, lwd=0.75))
+legend(0, -2, col = pal, lwd=2, legend=c("Deciduous/Freezing", "Deciduous/Non-freezing", "Evergreen/Freezing", "Evergreen/Non-freezing"), cex=0.7, box.col = "white", text.col="black")
+abline(h=log(0.044^2), lty=2, lwd=1.5, col=makeTransparent("black", 150))
+
+OUM.Vys <- filter(OUM.summary$solutions, data==regimes, Var1=="")
+OUMV.Vys <- filter(OUMV.summary$solutions, data==regimes, Var1=="")
+
+par(mar=c(5,0,4,10))
+plot(c(0,1.25), c(-11, -2), type="n", xlab="", ylab="", xaxt="n", yaxt="n", bty="n")
+
+y <- seq(-20, 10, 0.05)
+
+for(i in 1:nrow(OUM.Vys)){
+  lines(dnorm(y, mean=OUM.theta[[ind-2]][i,2], sd=sqrt(OUM.Vys$value[i])) , y, col=palT[OUM.theta[[ind-2]][i,1]])
+  lines(c(0, dnorm(OUM.theta[[ind-2]][i,2], mean=OUM.theta[[ind-2]][i,2], sd=sqrt(OUM.Vys$value[i]))) ,c(OUM.theta[[ind-2]][i,2],OUM.theta[[ind-2]][i,2]) , col=palT[OUM.theta[[ind-2]][i,1]], lwd=1, lty=2)
+}
+abline(h=log((0.044)^2), lty=2, lwd=1.5, col=makeTransparent("black", 150))
+
+
+xadj <- max(dnorm(OUM.theta[[ind-2]][,2], mean=OUM.theta[[ind-2]][,2], sd= sqrt(OUM.Vys$value)))
+xadj <- xadj*1.25
+#text(c(0.18, 0.25+xadj), c(-2, -2), labels=c("OUM", "OUMV"), cex=0.9)
+
+for(i in 1:nrow(OUMV.Vys)){
+  lines(dnorm(y, mean=OUMV.theta[[ind-2]][i,2], sd=sqrt(OUMV.Vys$value[i])) + xadj, y, col=palT[OUMV.theta[[ind-2]][i,1]])
+  lines(c(xadj, xadj+ dnorm(OUMV.theta[[ind-2]][i,2], mean=OUMV.theta[[ind-2]][i,2], sd=sqrt(OUMV.Vys$value[i]))) ,c(OUMV.theta[[ind-2]][i,2],OUMV.theta[[ind-2]][i,2]) , col=palT[OUMV.theta[[ind-2]][i,1]], lwd=1, lty=2)
+}
+
+for(i in names(pal)){
+  y <- dat$lnVs[dat[[regimes]]==i]
+  points(rep(xadj + 0.8, length(y))-0.06*which(c("D_F", "D_NF", "EV_F", "EV_NF")==i), y, pch="-", col=pal[i], cex=1.25)
+}
+abline(h=log(0.044^2), lty=2, lwd=1.5, col=makeTransparent("black", 150))
+
+
+dev.off()
+```
+```{r}
+sumThetaOUM <- group_by(OUM.theta[[ind-2]], reg) %>% summarize(., min=min(V1), max=max(V1), mean=mean(V1), median=median(V1))
+sumThetaOUM
+# Decidious change
+sumThetaOUM[1,4]- sumThetaOUM[2,4]
+# Evergreen change 
+sumThetaOUM[3,4]- sumThetaOUM[4,4]
+# Freezing change
+sumThetaOUM[1,4]- sumThetaOUM[3,4]
+# non-freezing change
+sumThetaOUM[2,4]- sumThetaOUM[4,4]
+
+```
+
