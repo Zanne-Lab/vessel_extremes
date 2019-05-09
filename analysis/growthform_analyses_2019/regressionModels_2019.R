@@ -69,7 +69,7 @@ priors[['m11100']] <- make.prior(tree, plot.prior = FALSE,
                           fixed=list(k=0, ntheta=1, sb=numeric(0), loc=numeric(0))
 )
 
-models[['m11100']] <- makeBayouModel(dat ~ logN + growthC, rjpars = c(), tree, dat, pred=.pred, priors$m11100, D=D.XX000(1))
+models[['m11100']] <- makeBayouModel(dat ~ logN + growthC, rjpars = c(), tree, dat, pred=.pred, priors$m11100, D=D.XXXXX(1))
 priors$m11100(models$m11100$startpar)
 #model.11000$model$lik.fn(model.11000$startpar, cache, cache$dat)$loglik
 
@@ -80,7 +80,7 @@ priors[['m11110']] <- make.prior(tree, plot.prior = FALSE,
                                  fixed=list(k=0, ntheta=1, sb=numeric(0), loc=numeric(0))
 )
 
-models[['m11110']] <- makeBayouModel(dat ~ logN + growthC+tempK, rjpars = c(), tree, dat, pred=.pred, priors$m11110, D=D.XX000(1))
+models[['m11110']] <- makeBayouModel(dat ~ logN + growthC+tempK, rjpars = c(), tree, dat, pred=.pred, priors$m11110, D=D.XXXXX(1))
 priors$m11110(models$m11110$startpar)
 #model.11000$model$lik.fn(model.11000$startpar, cache, cache$dat)$loglik
 
@@ -92,7 +92,7 @@ priors[['m11111']] <- make.prior(tree, plot.prior = FALSE,
                                  fixed=list(k=0, ntheta=1, sb=numeric(0), loc=numeric(0))
 )
 
-models[['m11111']] <- makeBayouModel(dat ~ logN + growthC + tempK + precip, rjpars = c(), tree, dat, pred=.pred, priors$m11111, D=D.XX000(1))
+models[['m11111']] <- makeBayouModel(dat ~ logN + growthC + tempK + precip, rjpars = c(), tree, dat, pred=.pred, priors$m11111, D=D.XXXXX(1))
 priors$m11111(models$m11111$startpar)
 #model.11000$model$lik.fn(model.11000$startpar, cache, cache$dat)$loglik
 
@@ -105,7 +105,7 @@ priors[['m11111x']] <- make.prior(tree, plot.prior = FALSE,
                                  fixed=list(k=0, ntheta=1, sb=numeric(0), loc=numeric(0))
 )
 
-models[['m11111x']] <- makeBayouModel(dat ~ logN + growthC*tempK + precip, rjpars = c(), tree, dat, pred=.pred, priors$m11111x, D=D.XX000(1))
+models[['m11111x']] <- makeBayouModel(dat ~ logN + growthC*tempK + precip, rjpars = c(), tree, dat, pred=.pred, priors$m11111x, D=D.XXXXX(1))
 priors$m11111x(models$m11111x$startpar)
 #model.11000$model$lik.fn(model.11000$startpar, cache, cache$dat)$loglik
 
